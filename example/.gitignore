@@ -1,0 +1,95 @@
+# OSX
+.DS_Store
+
+# Xcode
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+**/.xcode.env.local
+
+# Android/IntelliJ
+build/
+.idea
+.gradle
+local.properties
+*.iml
+*.hprof
+.cxx/
+*.keystore
+!debug.keystore
+
+# Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+android/app/.cxx/
+android/gradlew
+android/gradlew.bat
+android/gradle/
+
+# Generated files
+android/app/src/main/assets/
+
+# node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Bundle artifacts
+*.jsbundle
+
+# Ruby / CocoaPods
+/ios/Pods/
+/ios/build/
+/ios/DerivedData/
+/vendor/bundle/
+Podfile.lock
+
+# Temporary files
+*.log
+*.tmp
+
+# Config with secrets
+src/config.ts
+!src/config.example.ts
+
+# Metro
+.metro-health-check*
+
+# Testing
+coverage/
+
+# Yarn
+.yarn/
+yarn.lock
+
+# Package lock
+package-lock.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*~
+
+# Debug
+*.log
+.expo/
