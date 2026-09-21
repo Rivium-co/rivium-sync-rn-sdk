@@ -23,8 +23,6 @@ target 'RiviumSyncExample' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
-  # RiviumSync SDK (local)
-  pod 'RiviumSyncSDK', :path => '../../../ios/RiviumSync'
   pod 'MqttCocoaAsyncSocket', :modular_headers => true
 
   target 'RiviumSyncExampleTests' do

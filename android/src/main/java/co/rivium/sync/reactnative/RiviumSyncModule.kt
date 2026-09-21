@@ -72,9 +72,15 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
             .autoReconnect(if (options.hasKey("autoReconnect")) options.getBoolean("autoReconnect") else true)
             .offlineEnabled(offlineEnabled)
 
-        // userId for Security Rules (auth.uid)
+        // userId for Security Rules (auth.uid). The server cannot trust it -
+        // use a signed token where it matters.
         if (options.hasKey("userId") && !options.isNull("userId")) {
             options.getString("userId")?.let { configBuilder.userId(it) }
+        }
+
+        // Signed user token, minted by the app's own backend.
+        if (options.hasKey("userToken") && !options.isNull("userToken")) {
+            options.getString("userToken")?.let { configBuilder.userToken(it) }
         }
 
         // Other offline persistence options
@@ -162,6 +168,17 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 }
             }
         }
+    }
+
+    @ReactMethod
+    fun setUserToken(token: String?, promise: Promise) {
+        val sync = riviumSync
+        if (sync == null) {
+            promise.reject("notInitialized", "Call init before setUserToken")
+            return
+        }
+        sync.userTokens.set(token)
+        promise.resolve(null)
     }
 
     @ReactMethod

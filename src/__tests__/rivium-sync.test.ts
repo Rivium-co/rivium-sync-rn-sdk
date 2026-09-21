@@ -111,8 +111,8 @@ describe('@rivium/sync-react-native', () => {
 
   describe('Types and Interfaces', () => {
     it('RiviumSyncConfig should accept a minimal config with only apiKey', () => {
-      const config: RiviumSyncConfig = { apiKey: 'rv_test_abc123' };
-      expect(config.apiKey).toBe('rv_test_abc123');
+      const config: RiviumSyncConfig = { apiKey: 'rv_live_abc123' };
+      expect(config.apiKey).toBe('rv_live_abc123');
       expect(config.debugMode).toBeUndefined();
       expect(config.autoReconnect).toBeUndefined();
       expect(config.offlineEnabled).toBeUndefined();
@@ -785,10 +785,10 @@ describe('@rivium/sync-react-native', () => {
     describe('init()', () => {
       it('should call native init with merged default config', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         expect(mockNativeModule.init).toHaveBeenCalledWith({
-          apiKey: 'rv_test_key',
+          apiKey: 'rv_live_key',
           debugMode: false,
           autoReconnect: true,
           offlineEnabled: false,
@@ -827,32 +827,32 @@ describe('@rivium/sync-react-native', () => {
       it('should set isInitialized to true after init', async () => {
         const fresh = getFreshRiviumSync();
         expect(fresh.isInitialized).toBe(false);
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
         expect(fresh.isInitialized).toBe(true);
       });
 
       it('should be idempotent - second init should be a no-op', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_first' });
-        await fresh.init({ apiKey: 'rv_test_second' });
+        await fresh.init({ apiKey: 'rv_live_first' });
+        await fresh.init({ apiKey: 'rv_live_second' });
 
         // Native init should only have been called once (for 'first')
         expect(mockNativeModule.init).toHaveBeenCalledTimes(1);
         expect(mockNativeModule.init).toHaveBeenCalledWith(
-          expect.objectContaining({ apiKey: 'rv_test_first' })
+          expect.objectContaining({ apiKey: 'rv_live_first' })
         );
       });
 
       it('should set isOfflineEnabled based on config', async () => {
         const fresh = getFreshRiviumSync();
         expect(fresh.isOfflineEnabled).toBe(false);
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
         expect(fresh.isOfflineEnabled).toBe(true);
       });
 
       it('isOfflineEnabled should default to false', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
         expect(fresh.isOfflineEnabled).toBe(false);
       });
     });
@@ -860,7 +860,7 @@ describe('@rivium/sync-react-native', () => {
     describe('database()', () => {
       it('should return a SyncDatabase instance', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const db = fresh.database('my-db');
         expect(db.constructor.name).toBe('SyncDatabase');
@@ -878,7 +878,7 @@ describe('@rivium/sync-react-native', () => {
     describe('batch()', () => {
       it('should return a WriteBatch instance', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const b = fresh.batch();
         expect(b.constructor.name).toBe('WriteBatch');
@@ -895,7 +895,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('should return a new WriteBatch each time', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const b1 = fresh.batch();
         const b2 = fresh.batch();
@@ -944,7 +944,7 @@ describe('@rivium/sync-react-native', () => {
     describe('onConnectionState()', () => {
       it('should register a connection state listener', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onConnectionState(callback);
@@ -953,7 +953,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('should return an unsubscribe function that removes the listener', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onConnectionState(callback);
@@ -964,7 +964,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('unsubscribe should be idempotent (calling twice should not throw)', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onConnectionState(callback);
@@ -977,7 +977,7 @@ describe('@rivium/sync-react-native', () => {
     describe('onError()', () => {
       it('should register an error listener and return unsubscribe', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onError(callback);
@@ -986,7 +986,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('unsubscribe should remove the error listener', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key' });
+        await fresh.init({ apiKey: 'rv_live_key' });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onError(callback);
@@ -998,7 +998,7 @@ describe('@rivium/sync-react-native', () => {
     describe('Offline API', () => {
       it('onSyncState() should register a sync state listener and return unsubscribe', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onSyncState(callback);
@@ -1009,7 +1009,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('onPendingCount() should register a pending count listener and return unsubscribe', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         const callback = jest.fn();
         const unsubscribe = fresh.onPendingCount(callback);
@@ -1020,7 +1020,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('getSyncState() should return idle when offline is disabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: false });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: false });
 
         const state = await fresh.getSyncState();
         expect(state).toBe('idle');
@@ -1031,7 +1031,7 @@ describe('@rivium/sync-react-native', () => {
       it('getSyncState() should call native module when offline is enabled', async () => {
         mockNativeModule.getSyncState.mockResolvedValueOnce('syncing');
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         // Clear calls from init side-effects
         mockNativeModule.getSyncState.mockClear();
@@ -1044,7 +1044,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('getPendingCount() should return 0 when offline is disabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: false });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: false });
 
         const count = await fresh.getPendingCount();
         expect(count).toBe(0);
@@ -1053,7 +1053,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('getPendingCount() should call native module when offline is enabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         mockNativeModule.getPendingCount.mockClear();
         mockNativeModule.getPendingCount.mockResolvedValueOnce(7);
@@ -1065,7 +1065,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('forceSyncNow() should be a no-op when offline is disabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: false });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: false });
 
         await fresh.forceSyncNow();
         expect(mockNativeModule.forceSyncNow).not.toHaveBeenCalled();
@@ -1073,7 +1073,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('forceSyncNow() should call native module when offline is enabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         await fresh.forceSyncNow();
         expect(mockNativeModule.forceSyncNow).toHaveBeenCalled();
@@ -1081,7 +1081,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('clearOfflineCache() should be a no-op when offline is disabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: false });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: false });
 
         await fresh.clearOfflineCache();
         expect(mockNativeModule.clearOfflineCache).not.toHaveBeenCalled();
@@ -1089,7 +1089,7 @@ describe('@rivium/sync-react-native', () => {
 
       it('clearOfflineCache() should call native module when offline is enabled', async () => {
         const fresh = getFreshRiviumSync();
-        await fresh.init({ apiKey: 'rv_test_key', offlineEnabled: true });
+        await fresh.init({ apiKey: 'rv_live_key', offlineEnabled: true });
 
         await fresh.clearOfflineCache();
         expect(mockNativeModule.clearOfflineCache).toHaveBeenCalled();
@@ -1132,7 +1132,7 @@ describe('@rivium/sync-react-native', () => {
   describe('Integration: end-to-end usage patterns', () => {
     it('should support full workflow: init -> database -> collection -> CRUD', async () => {
       const fresh = getFreshRiviumSync();
-      await fresh.init({ apiKey: 'rv_test_integration' });
+      await fresh.init({ apiKey: 'rv_live_integration' });
 
       const db = fresh.database('prod-db');
       expect(db.constructor.name).toBe('SyncDatabase');
@@ -1163,7 +1163,7 @@ describe('@rivium/sync-react-native', () => {
 
     it('should support batch operations across multiple collections', async () => {
       const fresh = getFreshRiviumSync();
-      await fresh.init({ apiKey: 'rv_test_batch_integration' });
+      await fresh.init({ apiKey: 'rv_live_batch_integration' });
 
       const db = fresh.database('app-db');
       const users = db.collection('users');
@@ -1190,7 +1190,7 @@ describe('@rivium/sync-react-native', () => {
 
     it('should support listening and then unsubscribing from a collection', async () => {
       const fresh = getFreshRiviumSync();
-      await fresh.init({ apiKey: 'rv_test_listen' });
+      await fresh.init({ apiKey: 'rv_live_listen' });
 
       const db = fresh.database('listen-db');
       const col = db.collection('items');

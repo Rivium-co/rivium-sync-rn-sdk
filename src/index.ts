@@ -31,6 +31,15 @@ export interface RiviumSyncConfig {
   /** Optional user/device identifier for Security Rules (used as auth.uid).
    *  If not provided, the native SDK auto-generates a stable device ID. */
   userId?: string;
+  /**
+   * A signed user token minted by YOUR backend, which holds the server secret
+   * (`POST /users/token`). This is what makes `auth.uid` in Security Rules
+   * trustworthy - unlike `userId`, a client cannot forge it.
+   *
+   * Tokens are short lived (an hour by default). Call
+   * `RiviumSync.setUserToken()` with a fresh one whenever you refresh.
+   */
+  userToken?: string;
   /** Enable debug logging */
   debugMode?: boolean;
   /** Auto reconnect on connection loss (default: true) */
@@ -569,6 +578,7 @@ class RiviumSyncClass {
     await RiviumSyncModule.init({
       apiKey: config.apiKey,
       userId: config.userId,
+      userToken: config.userToken,
       debugMode: config.debugMode ?? false,
       autoReconnect: config.autoReconnect ?? true,
       // Offline options
@@ -748,6 +758,24 @@ class RiviumSyncClass {
   }
 
   // ==================== Core API ====================
+
+  /**
+   * Replace the signed user token the SDK sends with every request.
+   *
+   * Your backend mints it with its server secret (`POST /users/token`); the app
+   * never holds that secret. Call this when the user signs in, and again
+   * whenever you refresh the token - they are short lived, an hour by default.
+   *
+   * ```ts
+   * const { token } = await myBackend.fetchRiviumSyncToken();
+   * await sync.setUserToken(token);
+   * ```
+   *
+   * Pass null to stop sending a token, for example when the user signs out.
+   */
+  async setUserToken(token: string | null): Promise<void> {
+    return RiviumSyncModule.setUserToken(token);
+  }
 
   async connect(): Promise<void> {
     return RiviumSyncModule.connect();

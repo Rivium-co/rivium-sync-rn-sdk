@@ -92,6 +92,11 @@ class RiviumSyncModule: RCTEventEmitter {
         if let userId = options["userId"] as? String {
             _ = configBuilder.userId(userId)
         }
+
+        // Signed user token, minted by the app's own backend.
+        if let userToken = options["userToken"] as? String {
+            _ = configBuilder.userToken(userToken)
+        }
         if let apiUrl = options["apiUrl"] as? String {
             _ = configBuilder.apiUrl(apiUrl)
         }
@@ -153,6 +158,17 @@ class RiviumSyncModule: RCTEventEmitter {
         }
     }
     
+    /// Replace the signed user token. JS fetches it from the app's own backend
+    /// and pushes it down, which keeps the bridge one-way.
+    @objc func setUserToken(_ token: String?, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        guard let sync = RiviumSync.shared else {
+            reject("notInitialized", "Call init before setUserToken", nil)
+            return
+        }
+        sync.userTokens.set(token)
+        resolve(nil)
+    }
+
     @objc func connect(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         guard let sdk = RiviumSync.shared else {
             reject("NOT_INITIALIZED", "RiviumSync not initialized. Call init() first.", nil)

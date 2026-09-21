@@ -108,9 +108,6 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
-    // RiviumSync SDK (from local Maven)
-    implementation("co.rivium.sync:rivium-sync-android:1.0.5")
-
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {

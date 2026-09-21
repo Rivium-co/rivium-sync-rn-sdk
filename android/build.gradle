@@ -41,7 +41,6 @@ android {
 repositories {
   google()
   mavenCentral()
-  mavenLocal()
   maven { url 'https://repo.eclipse.org/content/repositories/paho-releases/' }
 }
 
@@ -50,5 +49,5 @@ dependencies {
   implementation "org.jetbrains.kotlin:kotlin-stdlib:${safeExtGet('kotlinVersion', '1.9.20')}"
 
   // RiviumSync Android SDK (from local Maven)
-  implementation 'co.rivium.sync:rivium-sync-android:1.0.5'
+  implementation 'co.rivium:rivium-sync-android:0.2.0'
 }
