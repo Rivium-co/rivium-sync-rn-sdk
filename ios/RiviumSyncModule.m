@@ -21,6 +21,9 @@ RCT_EXTERN_METHOD(disconnect:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(isConnected:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(isAwaitingUserToken:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 // Databases
 RCT_EXTERN_METHOD(listDatabases:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)

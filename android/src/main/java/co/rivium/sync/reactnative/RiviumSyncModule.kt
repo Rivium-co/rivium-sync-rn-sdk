@@ -128,6 +128,10 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
             }
         })
 
+        // The project requires a user token and none is set yet: connect() is
+        // parked, not failed. The SDK connects when setUserToken supplies one.
+        riviumSync?.onAwaitingUserToken = { sendEvent("onAwaitingUserToken", null) }
+
         // Start observing sync state changes (for offline persistence)
         startObservingSyncState()
 
@@ -198,6 +202,11 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun isConnected(promise: Promise) {
         promise.resolve(riviumSync?.isConnected() ?: false)
+    }
+
+    @ReactMethod
+    fun isAwaitingUserToken(promise: Promise) {
+        promise.resolve(riviumSync?.isAwaitingUserToken ?: false)
     }
 
     @ReactMethod

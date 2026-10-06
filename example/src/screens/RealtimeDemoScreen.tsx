@@ -30,7 +30,7 @@ export const RealtimeDemoScreen: React.FC = () => {
   const documentListenerRef = useRef<ListenerRegistration | null>(null);
 
   useEffect(() => {
-    const db = RiviumSync.database(AppConfig.databaseId);
+    const db = RiviumSync.database(AppConfig.databaseName);
     const col = db.collection(AppConfig.messagesCollection);
     setCollection(col);
 

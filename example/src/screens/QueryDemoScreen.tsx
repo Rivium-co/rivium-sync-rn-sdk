@@ -21,7 +21,7 @@ export const QueryDemoScreen: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const db = RiviumSync.database(AppConfig.databaseId);
+    const db = RiviumSync.database(AppConfig.databaseName);
     const col = db.collection(AppConfig.messagesCollection);
     setCollection(col);
   }, []);

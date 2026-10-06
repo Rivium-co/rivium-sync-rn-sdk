@@ -619,7 +619,7 @@ describe('@rivium/sync-react-native', () => {
         name: 'orders',
       });
       expect(col).toBeInstanceOf(SyncCollection);
-      expect(col.id).toBe('new-col');
+      expect(col.id).toBe('orders'); // keyed by name for realtime topics
       expect(col.name).toBe('orders');
       expect(col.databaseId).toBe('db-42');
     });

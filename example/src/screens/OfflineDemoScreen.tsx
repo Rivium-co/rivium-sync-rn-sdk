@@ -21,7 +21,7 @@ export const OfflineDemoScreen: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const db = RiviumSync.database(AppConfig.databaseId);
+    const db = RiviumSync.database(AppConfig.databaseName);
     const col = db.collection(AppConfig.messagesCollection);
     setCollection(col);
 

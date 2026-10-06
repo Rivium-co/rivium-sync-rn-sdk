@@ -50,7 +50,7 @@ class RiviumSyncModule: RCTEventEmitter {
     }
 
     override func supportedEvents() -> [String]! {
-        return ["onConnectionState", "onError", "collectionUpdate", "documentUpdate", "queryUpdate", "onSyncState", "onPendingCount"]
+        return ["onConnectionState", "onError", "collectionUpdate", "documentUpdate", "queryUpdate", "onSyncState", "onPendingCount", "onAwaitingUserToken"]
     }
 
     // Called when JS starts listening - emit cached state
@@ -121,6 +121,14 @@ class RiviumSyncModule: RCTEventEmitter {
         RiviumSync.initialize(config: config)
         delegateHandler = RiviumSyncDelegateHandler(module: self)
         RiviumSync.shared?.delegate = delegateHandler
+        // The project requires a user token and none is set yet: connect() is
+        // parked, not failed. The SDK connects when setUserToken supplies one.
+        RiviumSync.shared?.onAwaitingUserToken = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self, self.hasListeners else { return }
+                self.sendEvent(withName: "onAwaitingUserToken", body: nil)
+            }
+        }
 
         // Set up offline listeners if enabled
         if options["offlineEnabled"] as? Bool == true {
@@ -191,6 +199,10 @@ class RiviumSyncModule: RCTEventEmitter {
     
     @objc func isConnected(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
         resolve(RiviumSync.shared?.isConnected ?? false)
+    }
+
+    @objc func isAwaitingUserToken(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        resolve(RiviumSync.shared?.isAwaitingUserToken ?? false)
     }
     
     @objc func listDatabases(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {

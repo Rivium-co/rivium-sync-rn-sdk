@@ -1,4 +1,4 @@
-import { NativeModules, NativeEventEmitter, Platform, EmitterSubscription } from 'react-native';
+import { NativeModules, NativeEventEmitter, Platform, EmitterSubscription, AppState } from 'react-native';
 
 const LINKING_ERROR =
   `The package '@rivium/sync-react-native' doesn't seem to be linked. Make sure: \n\n` +
@@ -40,6 +40,14 @@ export interface RiviumSyncConfig {
    * `RiviumSync.setUserToken()` with a fresh one whenever you refresh.
    */
   userToken?: string;
+  /**
+   * Lets the SDK get the user token by itself: at `init`, again shortly before
+   * the token expires, and when the app returns to the foreground with an
+   * expired one. Return null when no one is signed in, and call
+   * `RiviumSync.refreshUserToken()` when the user signs in or out. Preferred
+   * over `userToken`. It is the same Rivium user token Rivium Push and Chat use.
+   */
+  tokenProvider?: RiviumSyncTokenProvider;
   /** Enable debug logging */
   debugMode?: boolean;
   /** Auto reconnect on connection loss (default: true) */
@@ -379,8 +387,15 @@ export class SyncDatabase {
     this.name = name;
   }
 
-  collection(collectionIdOrName: string): SyncCollection {
-    return new SyncCollection(this.id, collectionIdOrName, collectionIdOrName);
+  /**
+   * Get a collection reference.
+   *
+   * @param collectionName The collection NAME as shown in Rivium Console
+   *   (e.g. `'todos'`), not its UUID. Realtime updates are published by name,
+   *   so `listen` callbacks only receive changes when you pass the name.
+   */
+  collection(collectionName: string): SyncCollection {
+    return new SyncCollection(this.id, collectionName, collectionName);
   }
 
   async listCollections(): Promise<CollectionInfo[]> {
@@ -392,7 +407,9 @@ export class SyncDatabase {
       databaseId: this.id,
       name,
     });
-    return new SyncCollection(this.id, info.id, info.name);
+    // Keyed by name, like collection(): realtime topics carry names, so a
+    // UUID-keyed collection would never receive live updates.
+    return new SyncCollection(this.id, info.name, info.name);
   }
 
   async deleteCollection(collectionId: string): Promise<void> {
@@ -561,6 +578,41 @@ export class WriteBatch {
   }
 }
 
+/** Returns the signed user token for whoever is signed in, or null. */
+export type RiviumSyncTokenProvider = () => string | null | Promise<string | null>;
+
+/** Ask the provider for a new token this long before the old one expires. */
+const TOKEN_REFRESH_MARGIN_MS = 60_000;
+/** Wait this long before asking again after the provider failed. */
+const TOKEN_RETRY_DELAY_MS = 60_000;
+
+/** `exp` of a JWT in milliseconds, or null when it cannot be read. */
+function tokenExpiryMs(jwt: string): number | null {
+  try {
+    const part = jwt.split('.')[1];
+    if (!part) return null;
+    // Not every React Native runtime has atob; decode base64url by hand.
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    let bits = 0;
+    let buffer = 0;
+    let json = '';
+    for (const ch of part.replace(/=+$/, '')) {
+      const value = alphabet.indexOf(ch === '+' ? '-' : ch === '/' ? '_' : ch);
+      if (value < 0) return null;
+      buffer = (buffer << 6) | value;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        json += String.fromCharCode((buffer >> bits) & 0xff);
+      }
+    }
+    const exp = JSON.parse(json).exp;
+    return typeof exp === 'number' ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 // Main RiviumSync class
 class RiviumSyncClass {
   private _initialized = false;
@@ -569,16 +621,31 @@ class RiviumSyncClass {
   private errorListeners: ((error: any) => void)[] = [];
   private syncStateListeners: ((state: SyncState) => void)[] = [];
   private pendingCountListeners: ((count: number) => void)[] = [];
+  private awaitingUserTokenListeners: (() => void)[] = [];
+  private tokenProvider: RiviumSyncTokenProvider | null = null;
+  private tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private tokenExpiresAtMs: number | null = null;
+  private watchingAppState = false;
 
   async init(config: RiviumSyncConfig): Promise<void> {
     if (this._initialized) return;
 
     this._offlineEnabled = config.offlineEnabled ?? false;
 
+    this.tokenProvider = config.tokenProvider ?? this.tokenProvider;
+    let userToken = config.userToken;
+    if (this.tokenProvider) {
+      try {
+        userToken = (await this.tokenProvider()) ?? userToken;
+      } catch {
+        // Start without a token; refreshUserToken() or the next renewal fixes it.
+      }
+    }
+
     await RiviumSyncModule.init({
       apiKey: config.apiKey,
       userId: config.userId,
-      userToken: config.userToken,
+      userToken,
       debugMode: config.debugMode ?? false,
       autoReconnect: config.autoReconnect ?? true,
       // Offline options
@@ -606,7 +673,44 @@ class RiviumSyncClass {
       this.pendingCountListeners.forEach((cb) => cb(count));
     });
 
+    eventEmitter.addListener('onAwaitingUserToken', () => {
+      this.awaitingUserTokenListeners.forEach((cb) => cb());
+    });
+
     this._initialized = true;
+    this.trackToken(userToken ?? null);
+  }
+
+  /** Remember when the token expires and, with a provider, plan its renewal. */
+  private trackToken(token: string | null): void {
+    this.tokenExpiresAtMs = token ? tokenExpiryMs(token) : null;
+    if (this.tokenRefreshTimer) clearTimeout(this.tokenRefreshTimer);
+    this.tokenRefreshTimer = null;
+    if (!this.tokenProvider) return;
+    this.watchAppState();
+    // No token (signed out) or an unreadable one: nothing to renew until the
+    // app calls refreshUserToken().
+    if (this.tokenExpiresAtMs == null) return;
+    this.scheduleTokenRefresh(Math.max(0, this.tokenExpiresAtMs - TOKEN_REFRESH_MARGIN_MS - Date.now()));
+  }
+
+  private scheduleTokenRefresh(waitMs: number): void {
+    if (this.tokenRefreshTimer) clearTimeout(this.tokenRefreshTimer);
+    this.tokenRefreshTimer = setTimeout(() => {
+      this.refreshUserToken().catch(() => {});
+    }, waitMs);
+  }
+
+  /** Timers do not run while the app is suspended; check once on return. */
+  private watchAppState(): void {
+    if (this.watchingAppState) return;
+    this.watchingAppState = true;
+    AppState?.addEventListener?.('change', (state) => {
+      if (state !== 'active' || this.tokenExpiresAtMs == null) return;
+      if (Date.now() > this.tokenExpiresAtMs - TOKEN_REFRESH_MARGIN_MS) {
+        this.refreshUserToken().catch(() => {});
+      }
+    });
   }
 
 
@@ -771,12 +875,66 @@ class RiviumSyncClass {
    * await sync.setUserToken(token);
    * ```
    *
+   * If `connect()` was waiting for a token, the SDK connects now; if it is
+   * connected as another user, it reconnects as this one.
+   *
    * Pass null to stop sending a token, for example when the user signs out.
    */
   async setUserToken(token: string | null): Promise<void> {
-    return RiviumSyncModule.setUserToken(token);
+    await RiviumSyncModule.setUserToken(token);
+    this.trackToken(token);
   }
 
+  /** Set or remove the token provider after `init`. It is asked straight away. */
+  async setTokenProvider(provider: RiviumSyncTokenProvider | null): Promise<void> {
+    this.tokenProvider = provider;
+    if (!provider) {
+      if (this.tokenRefreshTimer) clearTimeout(this.tokenRefreshTimer);
+      this.tokenRefreshTimer = null;
+      return;
+    }
+    if (this._initialized) await this.refreshUserToken();
+  }
+
+  /**
+   * Ask the token provider again and hand the result to the SDK. Call this
+   * when the user signs in or out. Does nothing without a provider.
+   */
+  async refreshUserToken(): Promise<void> {
+    if (!this.tokenProvider || !this._initialized) return;
+    let token: string | null;
+    try {
+      token = await this.tokenProvider();
+    } catch {
+      // Keep the token the SDK has; it may still be valid. Try again later.
+      this.scheduleTokenRefresh(TOKEN_RETRY_DELAY_MS);
+      return;
+    }
+    await this.setUserToken(token);
+  }
+
+  /**
+   * Called when `connect()` starts waiting for a user token: the project
+   * requires signed user tokens and none has been supplied yet. Returns a
+   * function that removes the listener.
+   */
+  onAwaitingUserToken(callback: () => void): () => void {
+    this.awaitingUserTokenListeners.push(callback);
+    return () => {
+      this.awaitingUserTokenListeners = this.awaitingUserTokenListeners.filter((cb) => cb !== callback);
+    };
+  }
+
+  /** True while `connect()` is waiting for a user token. */
+  async isAwaitingUserToken(): Promise<boolean> {
+    return RiviumSyncModule.isAwaitingUserToken();
+  }
+
+  /**
+   * Connect to the realtime service. May be called before anyone is signed
+   * in: if the project requires signed user tokens and there is none yet, this
+   * resolves normally and the SDK connects once a token is set.
+   */
   async connect(): Promise<void> {
     return RiviumSyncModule.connect();
   }
@@ -789,11 +947,23 @@ class RiviumSyncClass {
     return RiviumSyncModule.isConnected();
   }
 
-  database(databaseId: string): SyncDatabase {
+  /**
+   * Get a database reference.
+   *
+   * @param databaseName The database NAME as shown in Rivium Console
+   *   (e.g. `'my-app'`), not its UUID. Realtime updates are published by name,
+   *   so `listen` callbacks only receive changes when you pass the name.
+   *
+   * @example
+   * ```typescript
+   * const todos = RiviumSync.database('my-app').collection('todos');
+   * ```
+   */
+  database(databaseName: string): SyncDatabase {
     if (!this._initialized) {
       throw new Error('RiviumSync not initialized. Call RiviumSync.init() first.');
     }
-    return new SyncDatabase(databaseId, '');
+    return new SyncDatabase(databaseName, '');
   }
 
   async listDatabases(): Promise<DatabaseInfo[]> {

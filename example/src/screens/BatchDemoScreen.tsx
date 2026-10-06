@@ -21,7 +21,7 @@ export const BatchDemoScreen: React.FC = () => {
   const [createdDocIds, setCreatedDocIds] = useState<string[]>([]);
 
   useEffect(() => {
-    const database = RiviumSync.database(AppConfig.databaseId);
+    const database = RiviumSync.database(AppConfig.databaseName);
     const col = database.collection(AppConfig.messagesCollection);
     setDb(database);
     setCollection(col);

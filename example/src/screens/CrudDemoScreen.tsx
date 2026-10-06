@@ -24,7 +24,7 @@ export const CrudDemoScreen: React.FC = () => {
   const [description, setDescription] = useState('');
 
   useEffect(() => {
-    const db = RiviumSync.database(AppConfig.databaseId);
+    const db = RiviumSync.database(AppConfig.databaseName);
     const col = db.collection(AppConfig.todosCollection);
     setCollection(col);
   }, []);

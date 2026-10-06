@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Added `tokenProvider`, `setTokenProvider()` and `refreshUserToken()`: the SDK
+  gets and renews the user token itself.
+- `connect()` can be called before sign-in when user tokens are required: the
+  SDK waits for a token and then connects (`onAwaitingUserToken`,
+  `isAwaitingUserToken()`).
+- Setting a token for a different user reconnects as that user.
+
 ## 0.2.0
 
 - Added `userToken` in the config and `setUserToken()`, so Security Rules can
