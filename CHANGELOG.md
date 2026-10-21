@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- The native SDKs now report this package to the Sync API in the
+  `X-Rivium-SDK` header (`react-native/<version> android/<version>` or
+  `react-native/<version> ios/<version>`), so the Console can show which SDK
+  and version a project uses. Exported `SDK_NAME` / `SDK_VERSION`
+  (`src/version.ts`, generated from package.json by `scripts/sync-version.js`).
+- Needs the native SDKs that accept the wrapper identity: the package now
+  depends on rivium-sync-android 0.2.4 and RiviumSync (iOS) ~> 0.2.3, which
+  must be released first.
+
 ## 0.2.3
 
 - With offline persistence on, writes made before the realtime connection is up

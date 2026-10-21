@@ -68,6 +68,7 @@ import {
   WriteBatch,
   RiviumSync,
 } from '../index';
+import { SDK_VERSION } from '../version';
 
 import type {
   RiviumSyncConfig,
@@ -796,6 +797,8 @@ describe('@rivium/sync-react-native', () => {
           syncOnReconnect: true,
           conflictStrategy: 'serverWins',
           maxSyncRetries: 3,
+          wrapperSdkName: 'react-native',
+          wrapperSdkVersion: SDK_VERSION,
         });
       });
 
@@ -821,6 +824,8 @@ describe('@rivium/sync-react-native', () => {
           syncOnReconnect: false,
           conflictStrategy: 'merge',
           maxSyncRetries: 10,
+          wrapperSdkName: 'react-native',
+          wrapperSdkVersion: SDK_VERSION,
         });
       });
 

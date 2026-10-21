@@ -116,6 +116,11 @@ class RiviumSyncModule: RCTEventEmitter {
         _ = configBuilder.syncOnReconnect(options["syncOnReconnect"] as? Bool ?? true)
         _ = configBuilder.conflictStrategy(conflictStrategy)
         _ = configBuilder.maxSyncRetries(options["maxSyncRetries"] as? Int ?? 3)
+        // Report this package (react-native/<version>) in the X-Rivium-SDK header.
+        _ = configBuilder.wrapperSdk(
+            name: options["wrapperSdkName"] as? String,
+            version: options["wrapperSdkVersion"] as? String
+        )
 
         let config = configBuilder.build()
         RiviumSync.initialize(config: config)

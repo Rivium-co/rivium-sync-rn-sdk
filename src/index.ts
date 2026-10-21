@@ -1,4 +1,7 @@
 import { NativeModules, NativeEventEmitter, Platform, EmitterSubscription, AppState } from 'react-native';
+import { SDK_NAME, SDK_VERSION } from './version';
+
+export { SDK_NAME, SDK_VERSION };
 
 const LINKING_ERROR =
   `The package '@rivium/sync-react-native' doesn't seem to be linked. Make sure: \n\n` +
@@ -654,6 +657,9 @@ class RiviumSyncClass {
       syncOnReconnect: config.syncOnReconnect ?? true,
       conflictStrategy: config.conflictStrategy ?? 'serverWins',
       maxSyncRetries: config.maxSyncRetries ?? 3,
+      // The native SDK reports this package in the X-Rivium-SDK header.
+      wrapperSdkName: SDK_NAME,
+      wrapperSdkVersion: SDK_VERSION,
     });
 
     // Set up event listeners (these work on iOS, Android uses polling for connection state)

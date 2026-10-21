@@ -104,6 +104,12 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
             configBuilder.conflictStrategy(conflictStrategy)
         }
 
+        // Report this package (react-native/<version>) in the X-Rivium-SDK header.
+        configBuilder.wrapperSdk(
+            if (options.hasKey("wrapperSdkName")) options.getString("wrapperSdkName") else null,
+            if (options.hasKey("wrapperSdkVersion")) options.getString("wrapperSdkVersion") else null,
+        )
+
         val config = configBuilder.build()
 
         riviumSync = RiviumSync.initialize(reactApplicationContext, config)

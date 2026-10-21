@@ -22,6 +22,10 @@
   "scripts": {
     "test": "jest --forceExit",
     "typescript": "tsc --noEmit",
+    "version-sync": "node scripts/sync-version.js",
+    "version-check": "node scripts/sync-version.js --check",
+    "version": "node scripts/sync-version.js && git add src/version.ts",
+    "prepublishOnly": "node scripts/sync-version.js --check",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "prepare": "bob build"
   },
