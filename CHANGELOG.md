@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.7
+
+- Android release builds (R8 / ProGuard) work without rules in your app.
+- Uses rivium-sync-android 0.2.7, installed automatically.
+
 ## 0.2.6
 
 - Realtime is always encrypted; the SDK never connects unencrypted.
