@@ -1,6 +1,6 @@
 {
   "name": "@rivium/sync-react-native",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "React Native SDK for RiviumSync realtime database - Firebase alternative",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -13,6 +13,7 @@
     "android",
     "ios",
     "*.podspec",
+    "THIRD_PARTY_NOTICES.md",
     "!lib/typescript/example",
     "!src/__tests__",
     "!lib/**/__tests__",
