@@ -97,19 +97,7 @@ class RiviumSyncModule: RCTEventEmitter {
         if let userToken = options["userToken"] as? String {
             _ = configBuilder.userToken(userToken)
         }
-        if let apiUrl = options["apiUrl"] as? String {
-            _ = configBuilder.apiUrl(apiUrl)
-        }
-        if let mqttHost = options["mqttHost"] as? String {
-            _ = configBuilder.mqttHost(mqttHost)
-        }
-        if let mqttPort = options["mqttPort"] as? Int {
-            _ = configBuilder.mqttPort(mqttPort)
-        }
-        // Only when the app sets it: otherwise the server's endpoint (it can move clients to an encrypted port).
-        if let mqttUseTls = options["mqttUseTls"] as? Bool {
-            _ = configBuilder.mqttUseTls(mqttUseTls)
-        }
+        // Endpoints are fixed in the native SDK and always encrypted; there is nothing to pass.
         _ = configBuilder.debugMode(options["debugMode"] as? Bool ?? false)
         _ = configBuilder.autoReconnect(options["autoReconnect"] as? Bool ?? true)
 
