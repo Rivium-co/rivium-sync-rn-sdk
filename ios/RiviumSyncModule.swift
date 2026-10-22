@@ -106,7 +106,10 @@ class RiviumSyncModule: RCTEventEmitter {
         if let mqttPort = options["mqttPort"] as? Int {
             _ = configBuilder.mqttPort(mqttPort)
         }
-        _ = configBuilder.mqttUseTls(options["mqttUseTls"] as? Bool ?? false)
+        // Only when the app sets it: otherwise the server's endpoint (it can move clients to an encrypted port).
+        if let mqttUseTls = options["mqttUseTls"] as? Bool {
+            _ = configBuilder.mqttUseTls(mqttUseTls)
+        }
         _ = configBuilder.debugMode(options["debugMode"] as? Bool ?? false)
         _ = configBuilder.autoReconnect(options["autoReconnect"] as? Bool ?? true)
 
