@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.8
+
+- `get()` with offline persistence throws when the server can't be reached
+  and the document is not cached, instead of returning null.
+- Uses rivium-sync-android 0.2.8 and RiviumSync (iOS) 0.2.6, installed
+  automatically.
+
 ## 0.2.7
 
 - Android release builds (R8 / ProGuard) work without rules in your app.

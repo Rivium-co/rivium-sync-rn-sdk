@@ -17,5 +17,5 @@ Pod::Spec.new do |s|
   s.swift_version = "5.7"
 
   s.dependency "React-Core"
-  s.dependency "RiviumSync", "~> 0.2.5"
+  s.dependency "RiviumSync", "~> 0.2.6"
 end
