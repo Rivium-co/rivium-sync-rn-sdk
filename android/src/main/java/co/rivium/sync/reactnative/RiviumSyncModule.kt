@@ -4,7 +4,9 @@ import android.util.Log
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import co.rivium.sync.sdk.*
+import co.rivium.sync.sdk.offline.ConflictInfo
 import co.rivium.sync.sdk.offline.ConflictStrategy
+import co.rivium.sync.sdk.offline.OperationType
 import co.rivium.sync.sdk.offline.SyncState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
@@ -90,9 +92,6 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         if (options.hasKey("syncOnReconnect")) {
             configBuilder.syncOnReconnect(options.getBoolean("syncOnReconnect"))
         }
-        if (options.hasKey("maxSyncRetries")) {
-            configBuilder.maxSyncRetries(options.getInt("maxSyncRetries"))
-        }
         if (options.hasKey("conflictStrategy")) {
             val strategy = options.getString("conflictStrategy")
             val conflictStrategy = when (strategy) {
@@ -102,6 +101,17 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 else -> ConflictStrategy.SERVER_WINS
             }
             configBuilder.conflictStrategy(conflictStrategy)
+        }
+
+        // A local Rivium Sync server (JS `emulator`): plain HTTP and realtime without TLS.
+        if (options.hasKey("emulatorHost") && !options.isNull("emulatorHost")) {
+            val host = options.getString("emulatorHost") ?: ""
+            val port = if (options.hasKey("emulatorPort") && !options.isNull("emulatorPort")) options.getInt("emulatorPort") else 3006
+            try {
+                configBuilder.useEmulator(host, port)
+            } catch (e: IllegalArgumentException) {
+                return promise.reject("ERROR", e.message)
+            }
         }
 
         // Report this package (react-native/<version>) in the X-Rivium-SDK header.
@@ -138,10 +148,53 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         // parked, not failed. The SDK connects when setUserToken supplies one.
         riviumSync?.onAwaitingUserToken = { sendEvent("onAwaitingUserToken", null) }
 
+        // Queued writes the server refused (offline persistence only): JS onDocumentRejected.
+        riviumSync?.addSyncListener(rejectedWrites)
+
         // Start observing sync state changes (for offline persistence)
         startObservingSyncState()
 
         promise.resolve(null)
+    }
+
+    /** Forwards queued writes the server refused to JS as `onDocumentRejected`. */
+    private val rejectedWrites = object : SyncListener {
+        override fun onSyncStarted() {}
+        override fun onSyncCompleted(syncedCount: Int) {}
+        override fun onSyncFailed(error: Throwable) {}
+        override fun onConflictDetected(conflict: ConflictInfo) {}
+        override fun onDocumentSynced(documentId: String, operation: OperationType) {}
+        override fun onDocumentRejected(documentId: String, operation: OperationType, error: Throwable) {
+            sendEvent("onDocumentRejected", Arguments.createMap().apply {
+                putString("documentId", documentId)
+                putString("operation", operation.name.lowercase())
+                putMap("error", errorMap(error))
+            })
+        }
+    }
+
+    /**
+     * Rejects [promise] with [code] and the error's message; when the server answered, its HTTP status is in the
+     * rejection's userInfo (`statusCode`), which JS turns into a RiviumSyncError. A query the rules do not allow
+     * (also `getAll()`) is rejected as `query_not_allowed` with its fields.
+     */
+    private fun reject(promise: Promise, code: String, e: Throwable) {
+        if (e is RiviumSyncException.QueryNotAllowedException) {
+            val userInfo = Arguments.createMap().apply {
+                putArray("fields", Arguments.fromList(e.fields))
+                putInt("statusCode", 403)
+            }
+            promise.reject("query_not_allowed", e.message, e, userInfo)
+            return
+        }
+        // A failed batch wraps the server's answer (BatchWriteException).
+        val status = ((e as? RiviumSyncException.NetworkException) ?: (e.cause as? RiviumSyncException.NetworkException))?.statusCode
+        if (status == null) {
+            promise.reject(code, e.message, e)
+            return
+        }
+        val userInfo = Arguments.createMap().apply { putInt("statusCode", status) }
+        promise.reject(code, e.message, e, userInfo)
     }
 
     /**
@@ -232,7 +285,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 }
                 promise.resolve(result)
             } catch (e: Exception) {
-                promise.reject("DATABASE_ERROR", e.message)
+                reject(promise, "DATABASE_ERROR", e)
             }
         }
     }
@@ -267,7 +320,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 }
                 promise.resolve(result)
             } catch (e: Exception) {
-                promise.reject("COLLECTION_ERROR", e.message)
+                reject(promise, "COLLECTION_ERROR", e)
             }
         }
     }
@@ -286,7 +339,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 }
                 promise.resolve(result)
             } catch (e: Exception) {
-                promise.reject("COLLECTION_ERROR", e.message)
+                reject(promise, "COLLECTION_ERROR", e)
             }
         }
     }
@@ -302,7 +355,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 val doc = riviumSync?.database(databaseId)?.collection(collectionId)?.add(data)
                 promise.resolve(documentToMap(doc))
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
@@ -318,7 +371,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 val doc = riviumSync?.database(databaseId)?.collection(collectionId)?.get(documentId)
                 promise.resolve(doc?.let { documentToMap(it) })
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
@@ -335,7 +388,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 docs.forEach { doc -> result.pushMap(documentToMap(doc)) }
                 promise.resolve(result)
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
@@ -352,7 +405,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 val doc = riviumSync?.database(databaseId)?.collection(collectionId)?.update(documentId, data)
                 promise.resolve(documentToMap(doc))
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
@@ -363,13 +416,15 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         val collectionId = options.getString("collectionId") ?: return promise.reject("ERROR", "collectionId required")
         val documentId = options.getString("documentId") ?: return promise.reject("ERROR", "documentId required")
         val data = options.getMap("data")?.toHashMap() ?: return promise.reject("ERROR", "data required")
+        // Replace by default; merge only when asked.
+        val merge = options.hasKey("merge") && !options.isNull("merge") && options.getBoolean("merge")
 
         scope.launch {
             try {
-                val doc = riviumSync?.database(databaseId)?.collection(collectionId)?.set(documentId, data)
+                val doc = riviumSync?.database(databaseId)?.collection(collectionId)?.set(documentId, data, merge)
                 promise.resolve(documentToMap(doc))
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
@@ -385,14 +440,49 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 riviumSync?.database(databaseId)?.collection(collectionId)?.delete(documentId)
                 promise.resolve(null)
             } catch (e: Exception) {
-                promise.reject("DOCUMENT_ERROR", e.message)
+                reject(promise, "DOCUMENT_ERROR", e)
             }
         }
     }
 
-    // Store pending updates for each listener (for callback-based approach)
-    private val pendingCollectionUpdates = java.util.concurrent.ConcurrentHashMap<String, WritableArray>()
-    private val collectionUpdatePromises = java.util.concurrent.ConcurrentHashMap<String, Promise>()
+    // ==================== Listeners ====================
+    //
+    // Each listener's events reach JS two ways: the event emitter (iOS-style, "collectionUpdate" / "documentUpdate"
+    // / "queryUpdate") and a promise the JS side keeps waiting on (waitFor*Update), which is what JS uses on
+    // Android. An event is { listenerId, documents | document } or, when the listener stopped, { listenerId, error }.
+
+    private val collectionEvents = ListenerEventQueue()
+    private val documentEvents = ListenerEventQueue()
+    private val queryEvents = ListenerEventQueue()
+
+    private fun documentsEvent(listenerId: String, docs: List<SyncDocument>): () -> WritableMap = {
+        Arguments.createMap().apply {
+            putString("listenerId", listenerId)
+            val docsArray = Arguments.createArray()
+            docs.forEach { doc -> docsArray.pushMap(documentToMap(doc)) }
+            putArray("documents", docsArray)
+        }
+    }
+
+    private fun documentEvent(listenerId: String, doc: SyncDocument?): () -> WritableMap = {
+        Arguments.createMap().apply {
+            putString("listenerId", listenerId)
+            if (doc != null) putMap("document", documentToMap(doc)) else putNull("document")
+        }
+    }
+
+    private fun errorEvent(listenerId: String, error: RiviumSyncException): () -> WritableMap = {
+        Arguments.createMap().apply {
+            putString("listenerId", listenerId)
+            putMap("error", errorMap(error))
+        }
+    }
+
+    /** Emits [event] as [eventName] and hands it to the listener's waiting promise (or keeps it for the next wait). */
+    private fun deliver(queue: ListenerEventQueue, eventName: String, listenerId: String, isError: Boolean, event: () -> WritableMap) {
+        sendEvent(eventName, event())
+        queue.offer(listenerId, isError, event)
+    }
 
     @ReactMethod
     fun listenCollection(options: ReadableMap, promise: Promise) {
@@ -400,34 +490,11 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         val collectionId = options.getString("collectionId") ?: return promise.reject("ERROR", "collectionId required")
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
 
-        val registration = riviumSync?.database(databaseId)?.collection(collectionId)?.listen { docs ->
-            val docsArray = Arguments.createArray()
-            docs.forEach { doc -> docsArray.pushMap(documentToMap(doc)) }
-
-            // Send via event emitter (for iOS compatibility)
-            val result = Arguments.createMap().apply {
-                putString("listenerId", listenerId)
-                putArray("documents", docsArray)
-            }
-            sendEvent("collectionUpdate", result)
-
-            // Also resolve any waiting promise (for Android callback-based approach)
-            val waitingPromise = collectionUpdatePromises.remove(listenerId)
-            if (waitingPromise != null) {
-                val callbackResult = Arguments.createMap().apply {
-                    putString("listenerId", listenerId)
-                    val freshDocsArray = Arguments.createArray()
-                    docs.forEach { doc -> freshDocsArray.pushMap(documentToMap(doc)) }
-                    putArray("documents", freshDocsArray)
-                }
-                waitingPromise.resolve(callbackResult)
-            } else {
-                // Store for later retrieval
-                val storedDocsArray = Arguments.createArray()
-                docs.forEach { doc -> storedDocsArray.pushMap(documentToMap(doc)) }
-                pendingCollectionUpdates[listenerId] = storedDocsArray
-            }
-        }
+        collectionEvents.open(listenerId)
+        val registration = riviumSync?.database(databaseId)?.collection(collectionId)?.listen(
+            { docs -> deliver(collectionEvents, "collectionUpdate", listenerId, false, documentsEvent(listenerId, docs)) },
+            { error -> deliver(collectionEvents, "collectionUpdate", listenerId, true, errorEvent(listenerId, error)) }
+        )
 
         registration?.let { listeners[listenerId] = it }
         promise.resolve(null)
@@ -437,36 +504,16 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun waitForCollectionUpdate(options: ReadableMap, promise: Promise) {
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
-
-        // Check if there's already a pending update
-        val pendingUpdate = pendingCollectionUpdates.remove(listenerId)
-        if (pendingUpdate != null) {
-            val result = Arguments.createMap().apply {
-                putString("listenerId", listenerId)
-                putArray("documents", pendingUpdate)
-            }
-            promise.resolve(result)
-            return
-        }
-
-        // Store the promise to be resolved when update arrives
-        collectionUpdatePromises[listenerId] = promise
+        collectionEvents.waitFor(listenerId, promise)
     }
 
     @ReactMethod
     fun removeCollectionListener(options: ReadableMap, promise: Promise) {
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
         listeners.remove(listenerId)?.remove()
-        // Clean up any pending data for this listener
-        pendingCollectionUpdates.remove(listenerId)
-        // Reject any waiting promise
-        collectionUpdatePromises.remove(listenerId)?.reject("LISTENER_REMOVED", "Listener was removed")
+        collectionEvents.close(listenerId)
         promise.resolve(null)
     }
-
-    // Store pending updates for document listeners
-    private val pendingDocumentUpdates = java.util.concurrent.ConcurrentHashMap<String, WritableMap?>()
-    private val documentUpdatePromises = java.util.concurrent.ConcurrentHashMap<String, Promise>()
 
     @ReactMethod
     fun listenDocument(options: ReadableMap, promise: Promise) {
@@ -475,34 +522,12 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         val documentId = options.getString("documentId") ?: return promise.reject("ERROR", "documentId required")
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
 
-        val registration = riviumSync?.database(databaseId)?.collection(collectionId)?.listenDocument(documentId) { doc ->
-            // Send via event emitter (for iOS)
-            val result = Arguments.createMap().apply {
-                putString("listenerId", listenerId)
-                if (doc != null) {
-                    putMap("document", documentToMap(doc))
-                } else {
-                    putNull("document")
-                }
-            }
-            sendEvent("documentUpdate", result)
-
-            // Also use callback-based approach (for Android)
-            val waitingPromise = documentUpdatePromises.remove(listenerId)
-            if (waitingPromise != null) {
-                val callbackResult = Arguments.createMap().apply {
-                    putString("listenerId", listenerId)
-                    if (doc != null) {
-                        putMap("document", documentToMap(doc))
-                    } else {
-                        putNull("document")
-                    }
-                }
-                waitingPromise.resolve(callbackResult)
-            } else {
-                pendingDocumentUpdates[listenerId] = if (doc != null) documentToMap(doc) else null
-            }
-        }
+        documentEvents.open(listenerId)
+        val registration = riviumSync?.database(databaseId)?.collection(collectionId)?.listenDocument(
+            documentId,
+            { doc -> deliver(documentEvents, "documentUpdate", listenerId, false, documentEvent(listenerId, doc)) },
+            { error -> deliver(documentEvents, "documentUpdate", listenerId, true, errorEvent(listenerId, error)) }
+        )
 
         registration?.let { listeners[listenerId] = it }
         promise.resolve(null)
@@ -512,32 +537,14 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun waitForDocumentUpdate(options: ReadableMap, promise: Promise) {
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
-
-        // Check if there's already a pending update
-        if (pendingDocumentUpdates.containsKey(listenerId)) {
-            val pendingUpdate = pendingDocumentUpdates.remove(listenerId)
-            val result = Arguments.createMap().apply {
-                putString("listenerId", listenerId)
-                if (pendingUpdate != null) {
-                    putMap("document", pendingUpdate)
-                } else {
-                    putNull("document")
-                }
-            }
-            promise.resolve(result)
-            return
-        }
-
-        documentUpdatePromises[listenerId] = promise
+        documentEvents.waitFor(listenerId, promise)
     }
 
     @ReactMethod
     fun removeDocumentListener(options: ReadableMap, promise: Promise) {
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
         listeners.remove(listenerId)?.remove()
-        // Clean up any pending data
-        pendingDocumentUpdates.remove(listenerId)
-        documentUpdatePromises.remove(listenerId)?.reject("LISTENER_REMOVED", "Listener was removed")
+        documentEvents.close(listenerId)
         promise.resolve(null)
     }
 
@@ -547,68 +554,32 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
         val collectionId = options.getString("collectionId") ?: return promise.reject("ERROR", "collectionId required")
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
 
-        scope.launch {
-            try {
-                var query = riviumSync?.database(databaseId)?.collection(collectionId)?.query()
+        try {
+            queryEvents.open(listenerId)
+            val registration = buildQuery(options, databaseId, collectionId)?.listen(
+                { docs -> deliver(queryEvents, "queryUpdate", listenerId, false, documentsEvent(listenerId, docs)) },
+                { error -> deliver(queryEvents, "queryUpdate", listenerId, true, errorEvent(listenerId, error)) }
+            )
 
-                options.getArray("filters")?.let { filters ->
-                    for (i in 0 until filters.size()) {
-                        val filter = filters.getMap(i)
-                        val field = filter.getString("field") ?: continue
-                        val operator = filter.getString("operator") ?: continue
-                        val value = filter.getDynamic("value")?.asString()
-                        val op = when (operator) {
-                            "==" -> QueryOperator.EQUAL
-                            "!=" -> QueryOperator.NOT_EQUAL
-                            ">" -> QueryOperator.GREATER_THAN
-                            ">=" -> QueryOperator.GREATER_THAN_OR_EQUAL
-                            "<" -> QueryOperator.LESS_THAN
-                            "<=" -> QueryOperator.LESS_THAN_OR_EQUAL
-                            "array-contains" -> QueryOperator.ARRAY_CONTAINS
-                            "in" -> QueryOperator.IN
-                            "not-in" -> QueryOperator.NOT_IN
-                            else -> QueryOperator.EQUAL
-                        }
-                        query = query?.where(field, op, value)
-                    }
-                }
-
-                options.getMap("orderBy")?.let { orderBy ->
-                    val field = orderBy.getString("field") ?: return@let
-                    val direction = if (orderBy.getString("direction") == "desc") OrderDirection.DESCENDING else OrderDirection.ASCENDING
-                    query = query?.orderBy(field, direction)
-                }
-
-                if (options.hasKey("limit")) {
-                    query = query?.limit(options.getInt("limit"))
-                }
-
-                if (options.hasKey("offset")) {
-                    query = query?.offset(options.getInt("offset"))
-                }
-
-                val registration = query?.listen { docs ->
-                    val result = Arguments.createMap().apply {
-                        putString("listenerId", listenerId)
-                        val docsArray = Arguments.createArray()
-                        docs.forEach { doc -> docsArray.pushMap(documentToMap(doc)) }
-                        putArray("documents", docsArray)
-                    }
-                    sendEvent("queryUpdate", result)
-                }
-
-                registration?.let { listeners[listenerId] = it }
-                promise.resolve(null)
-            } catch (e: Exception) {
-                promise.reject("QUERY_ERROR", e.message)
-            }
+            registration?.let { listeners[listenerId] = it }
+            promise.resolve(null)
+        } catch (e: Exception) {
+            reject(promise, "QUERY_ERROR", e)
         }
+    }
+
+    // Callback-based method to wait for next query update (used by Android)
+    @ReactMethod
+    fun waitForQueryUpdate(options: ReadableMap, promise: Promise) {
+        val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
+        queryEvents.waitFor(listenerId, promise)
     }
 
     @ReactMethod
     fun removeQueryListener(options: ReadableMap, promise: Promise) {
         val listenerId = options.getString("listenerId") ?: return promise.reject("ERROR", "listenerId required")
         listeners.remove(listenerId)?.remove()
+        queryEvents.close(listenerId)
         promise.resolve(null)
     }
 
@@ -619,51 +590,84 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
 
         scope.launch {
             try {
-                var query = riviumSync?.database(databaseId)?.collection(collectionId)?.query()
-
-                options.getArray("filters")?.let { filters ->
-                    for (i in 0 until filters.size()) {
-                        val filter = filters.getMap(i)
-                        val field = filter.getString("field") ?: continue
-                        val operator = filter.getString("operator") ?: continue
-                        val value = filter.getDynamic("value")?.asString()
-                        val op = when (operator) {
-                            "==" -> QueryOperator.EQUAL
-                            "!=" -> QueryOperator.NOT_EQUAL
-                            ">" -> QueryOperator.GREATER_THAN
-                            ">=" -> QueryOperator.GREATER_THAN_OR_EQUAL
-                            "<" -> QueryOperator.LESS_THAN
-                            "<=" -> QueryOperator.LESS_THAN_OR_EQUAL
-                            "array-contains" -> QueryOperator.ARRAY_CONTAINS
-                            "in" -> QueryOperator.IN
-                            "not-in" -> QueryOperator.NOT_IN
-                            else -> QueryOperator.EQUAL
-                        }
-                        query = query?.where(field, op, value)
-                    }
-                }
-
-                options.getMap("orderBy")?.let { orderBy ->
-                    val field = orderBy.getString("field") ?: return@let
-                    val direction = if (orderBy.getString("direction") == "desc") OrderDirection.DESCENDING else OrderDirection.ASCENDING
-                    query = query?.orderBy(field, direction)
-                }
-
-                if (options.hasKey("limit")) {
-                    query = query?.limit(options.getInt("limit"))
-                }
-
-                if (options.hasKey("offset")) {
-                    query = query?.offset(options.getInt("offset"))
-                }
-
-                val docs = query?.get() ?: emptyList()
+                val docs = buildQuery(options, databaseId, collectionId)?.get() ?: emptyList()
                 val result = Arguments.createArray()
                 docs.forEach { doc -> result.pushMap(documentToMap(doc)) }
                 promise.resolve(result)
             } catch (e: Exception) {
-                promise.reject("QUERY_ERROR", e.message)
+                // query_not_allowed is typed in JS: RiviumSyncError with these fields (error.userInfo).
+                reject(promise, "QUERY_ERROR", e)
             }
+        }
+    }
+
+    /**
+     * The query described by the options' filters / orderBy / limit / offset. Filter values keep their JSON type
+     * (numbers and booleans are not turned into strings: the server compares by type).
+     */
+    private fun buildQuery(options: ReadableMap, databaseId: String, collectionId: String): SyncQuery? {
+        var query = riviumSync?.database(databaseId)?.collection(collectionId)?.query()
+
+        options.getArray("filters")?.let { filters ->
+            for (i in 0 until filters.size()) {
+                val filter = filters.getMap(i) ?: continue
+                val field = filter.getString("field") ?: continue
+                val operator = filter.getString("operator") ?: continue
+                val value = filterValue(filter)
+                val op = when (operator) {
+                    "==" -> QueryOperator.EQUAL
+                    "!=" -> QueryOperator.NOT_EQUAL
+                    ">" -> QueryOperator.GREATER_THAN
+                    ">=" -> QueryOperator.GREATER_THAN_OR_EQUAL
+                    "<" -> QueryOperator.LESS_THAN
+                    "<=" -> QueryOperator.LESS_THAN_OR_EQUAL
+                    "array-contains" -> QueryOperator.ARRAY_CONTAINS
+                    "in" -> QueryOperator.IN
+                    "not-in" -> QueryOperator.NOT_IN
+                    else -> QueryOperator.EQUAL
+                }
+                query = query?.where(field, op, value)
+            }
+        }
+
+        options.getMap("orderBy")?.let { orderBy ->
+            val field = orderBy.getString("field") ?: return@let
+            val direction = if (orderBy.getString("direction") == "desc") OrderDirection.DESCENDING else OrderDirection.ASCENDING
+            query = query?.orderBy(field, direction)
+        }
+
+        if (options.hasKey("limit") && !options.isNull("limit")) {
+            query = query?.limit(options.getInt("limit"))
+        }
+
+        if (options.hasKey("offset") && !options.isNull("offset")) {
+            query = query?.offset(options.getInt("offset"))
+        }
+        return query
+    }
+
+    /** A filter's value as its JSON type: String, Boolean, Double, null, or a List / Map of those. */
+    private fun filterValue(filter: ReadableMap): Any? =
+        if (!filter.hasKey("value") || filter.isNull("value")) null else filter.toHashMap()["value"]
+
+    /**
+     * The error map a listener event (the listener stopped) or a rejected write carries, read by the JS
+     * RiviumSyncError: `query_not_allowed` with its fields, `listener_revoked`, `permission_denied` for another
+     * 403, else the server's code; `statusCode` when the server answered.
+     */
+    private fun errorMap(e: Throwable): WritableMap = Arguments.createMap().apply {
+        putString("message", e.message)
+        when (e) {
+            is RiviumSyncException.QueryNotAllowedException -> {
+                putString("code", "query_not_allowed")
+                putArray("fields", Arguments.fromList(e.fields))
+                putInt("statusCode", 403)
+            }
+            is RiviumSyncException.NetworkException -> {
+                putString("code", e.code ?: if (e.statusCode == 403) "permission_denied" else "UNKNOWN_ERROR")
+                e.statusCode?.let { putInt("statusCode", it) }
+            }
+            else -> putString("code", "UNKNOWN_ERROR")
         }
     }
 
@@ -683,13 +687,14 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                     val collectionId = op.getString("collectionId") ?: continue
                     val documentId = op.getString("documentId")
                     val data = op.getMap("data")?.toHashMap()
+                    val merge = op.hasKey("merge") && !op.isNull("merge") && op.getBoolean("merge")
 
                     val collection = riviumSync?.database(databaseId)?.collection(collectionId) ?: continue
 
                     when (type) {
                         "set" -> {
                             if (documentId != null && data != null) {
-                                batch.set(collection, documentId, data)
+                                batch.set(collection, documentId, data, merge)
                             }
                         }
                         "update" -> {
@@ -713,7 +718,7 @@ class RiviumSyncModule(reactContext: ReactApplicationContext) : ReactContextBase
                 batch.commit()
                 promise.resolve(null)
             } catch (e: Exception) {
-                promise.reject("BATCH_ERROR", e.message)
+                reject(promise, "BATCH_ERROR", e)
             }
         }
     }

@@ -465,6 +465,7 @@ describe('@rivium/sync-react-native', () => {
         collectionId: 'col-1',
         documentId: 'doc-2',
         data,
+        merge: false,
       });
     });
 
@@ -718,7 +719,7 @@ describe('@rivium/sync-react-native', () => {
 
       expect(mockNativeModule.executeBatch).toHaveBeenCalledWith({
         operations: [
-          { type: 'set', databaseId: 'db-1', collectionId: 'col-1', documentId: 'doc-1', data: { name: 'Alice' } },
+          { type: 'set', databaseId: 'db-1', collectionId: 'col-1', documentId: 'doc-1', data: { name: 'Alice' }, merge: false },
           { type: 'update', databaseId: 'db-1', collectionId: 'col-1', documentId: 'doc-2', data: { age: 30 } },
           { type: 'delete', databaseId: 'db-1', collectionId: 'col-1', documentId: 'doc-3' },
         ],

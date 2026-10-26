@@ -31,7 +31,6 @@ import RiviumSync from '@rivium/sync-react-native';
 // Initialize
 await RiviumSync.init({
   apiKey: 'your-api-key',
-  debugMode: true,
 });
 
 // Connect
@@ -55,6 +54,50 @@ const registration = users.listen((documents) => {
 > `'todos'`). Names are resolved inside your API key's project. Realtime
 > updates are published by name, so listeners only receive changes when you
 > pass the names.
+
+## Writing documents
+
+`set()` writes a document with the id you choose. The document becomes exactly
+the data you pass:
+
+```typescript
+await users.set('alice', { name: 'Alice', age: 30 });
+```
+
+To change some fields and keep the others, merge instead:
+
+```typescript
+await users.set('alice', { age: 31 }, { merge: true });
+```
+
+`WriteBatch.set()` takes the same `{ merge: true }` option.
+
+## Listener errors
+
+Your security rules decide what a listener may receive. Pass an error callback
+to hear why a listener stopped; after an error it receives nothing more:
+
+```typescript
+import RiviumSync, { RiviumSyncError } from '@rivium/sync-react-native';
+
+const registration = users
+  .where('teamId', '==', teamId)
+  .listen(
+    (documents) => console.log('Team members:', documents.length),
+    (error) => {
+      if (error.code === RiviumSyncError.QUERY_NOT_ALLOWED) {
+        // The rules do not allow this query. error.fields names the
+        // filters that would make it allowed.
+      } else if (error.code === RiviumSyncError.LISTENER_REVOKED) {
+        // The rules no longer allow it (for example the user left the team).
+      }
+    }
+  );
+```
+
+`listen()` and `listenDocument()` take the same error callback. A query's
+`get()` rejects with a `RiviumSyncError` with code `query_not_allowed` (and its
+`fields`) when the rules do not allow the query.
 
 ## Verified user identity
 

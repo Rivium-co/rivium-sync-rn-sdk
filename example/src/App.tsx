@@ -4,6 +4,7 @@ import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import RiviumSync from '@rivium/sync-react-native';
 import {AppConfig} from './config';
+import {emulatorHost, fetchDemoToken, isMinterConfigured} from './demoUser';
 import {
   HomeScreen,
   CrudDemoScreen,
@@ -11,6 +12,7 @@ import {
   QueryDemoScreen,
   BatchDemoScreen,
   OfflineDemoScreen,
+  RulesDemoScreen,
 } from './screens';
 
 export type RootStackParamList = {
@@ -20,6 +22,7 @@ export type RootStackParamList = {
   QueryDemo: undefined;
   BatchDemo: undefined;
   OfflineDemo: undefined;
+  RulesDemo: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -38,6 +41,12 @@ const App: React.FC = () => {
         apiKey: AppConfig.apiKey,
         offlineEnabled: true,
         debugMode: __DEV__, // Enable debug mode in development
+        // Development builds can talk to a local server (emulatorHost in config.ts).
+        emulator: emulatorHost ? {host: emulatorHost} : undefined,
+        // With a token provider, `auth.uid` in Security Rules is the user your
+        // backend named, and it cannot be forged. Only wired up when the demo
+        // minter can actually mint one (development builds with serverSecret).
+        tokenProvider: isMinterConfigured ? fetchDemoToken : undefined,
       });
       setIsInitialized(true);
     } catch (error: any) {
@@ -121,6 +130,13 @@ const App: React.FC = () => {
           component={OfflineDemoScreen}
           options={{
             title: 'Offline Persistence',
+          }}
+        />
+        <Stack.Screen
+          name="RulesDemo"
+          component={RulesDemoScreen}
+          options={{
+            title: 'Security Rules',
           }}
         />
       </Stack.Navigator>

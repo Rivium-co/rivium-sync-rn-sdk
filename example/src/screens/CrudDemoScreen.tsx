@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import RiviumSync, {SyncDocument, SyncCollection} from '@rivium/sync-react-native';
 import {AppConfig} from '../config';
+import {currentUserId, mine} from '../demoUser';
 import {ResultCard, CodeSnippet} from '../components';
 
 export const CrudDemoScreen: React.FC = () => {
@@ -39,7 +40,8 @@ export const CrudDemoScreen: React.FC = () => {
     if (!collection) return;
     setIsLoading(true);
     try {
-      const docs = await collection.getAll();
+      // Owner-only rules: list the signed-in user's todos (rules are not filters).
+      const docs = await mine(collection).get();
       setDocuments(docs);
       setLastResult(`Loaded ${docs.length} documents`);
     } catch (e: any) {
@@ -60,6 +62,7 @@ export const CrudDemoScreen: React.FC = () => {
     try {
       const doc = await collection.add({
         title: title.trim(),
+        userId: currentUserId(),
         description: description.trim(),
         completed: false,
         createdAt: new Date().toISOString(),

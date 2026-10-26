@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import RiviumSync, {SyncDocument, SyncCollection} from '@rivium/sync-react-native';
 import {AppConfig} from '../config';
+import {currentUserId, mine} from '../demoUser';
 import {ResultCard, CodeSnippet} from '../components';
 
 export const QueryDemoScreen: React.FC = () => {
@@ -47,34 +48,35 @@ export const QueryDemoScreen: React.FC = () => {
 
   const queryAll = async () => {
     if (!collection) return;
-    await executeQuery('Get All Documents', () => collection.getAll());
+    // Owner-only rules: every query filters on the signed-in user (rules are not filters).
+    await executeQuery('Get All (my documents)', () => mine(collection).get());
   };
 
   const queryWhereEquals = async () => {
     if (!collection) return;
     await executeQuery('Where sender == "Test User"', () =>
-      collection.where('sender', '==', 'Test User').get(),
+      mine(collection).where('sender', '==', 'Test User').get(),
     );
   };
 
   const queryOrderBy = async () => {
     if (!collection) return;
     await executeQuery('Order by timestamp (desc)', () =>
-      collection.query().orderBy('timestamp', 'desc').get(),
+      mine(collection).orderBy('timestamp', 'desc').get(),
     );
   };
 
   const queryLimit = async () => {
     if (!collection) return;
     await executeQuery('Limit to 5 documents', () =>
-      collection.query().limit(5).get(),
+      mine(collection).limit(5).get(),
     );
   };
 
   const queryCompound = async () => {
     if (!collection) return;
     await executeQuery('Compound query (where + orderBy + limit)', () =>
-      collection
+      mine(collection)
         .where('sender', '==', 'Test User')
         .orderBy('timestamp', 'desc')
         .limit(3)
@@ -103,6 +105,7 @@ export const QueryDemoScreen: React.FC = () => {
         await collection.add({
           message: messages[i % messages.length],
           sender: senders[i % senders.length],
+          userId: currentUserId(),
           timestamp: hoursAgo.toISOString(),
           priority: i % 3,
         });

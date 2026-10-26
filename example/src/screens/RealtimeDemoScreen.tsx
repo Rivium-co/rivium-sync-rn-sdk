@@ -13,6 +13,7 @@ import RiviumSync, {
   ListenerRegistration,
 } from '@rivium/sync-react-native';
 import {AppConfig} from '../config';
+import {currentUserId, mine} from '../demoUser';
 import {CodeSnippet} from '../components';
 
 export const RealtimeDemoScreen: React.FC = () => {
@@ -54,11 +55,20 @@ export const RealtimeDemoScreen: React.FC = () => {
     if (!collection || isListeningCollection) return;
 
     console.log('[RealtimeDemo] Starting collection listener...');
-    collectionListenerRef.current = collection.listen(docs => {
-      console.log('[RealtimeDemo] CALLBACK RECEIVED! docs:', docs?.length);
-      setDocuments(docs);
-      addToLog(`Collection updated: ${docs.length} documents`);
-    });
+    // Owner-only rules: listen to the signed-in user's documents (rules are not filters).
+    collectionListenerRef.current = mine(collection).listen(
+      docs => {
+        console.log('[RealtimeDemo] CALLBACK RECEIVED! docs:', docs?.length);
+        setDocuments(docs);
+        addToLog(`Collection updated: ${docs.length} documents`);
+      },
+      e => {
+        // Refused (query_not_allowed) or no longer allowed (listener_revoked): it has stopped.
+        collectionListenerRef.current = null;
+        setIsListeningCollection(false);
+        addToLog(`Listener stopped: ${e.code}: ${e.message}`);
+      },
+    );
 
     setIsListeningCollection(true);
     addToLog('Started listening to collection');
@@ -78,15 +88,23 @@ export const RealtimeDemoScreen: React.FC = () => {
 
     documentListenerRef.current?.remove();
 
-    documentListenerRef.current = collection.listenDocument(docId, document => {
-      setWatchedDocument(document);
-      setWatchedDocId(docId);
-      if (document) {
-        addToLog(`Document updated: ${JSON.stringify(document.data)}`);
-      } else {
-        addToLog('Document deleted');
-      }
-    });
+    documentListenerRef.current = collection.listenDocument(
+      docId,
+      document => {
+        setWatchedDocument(document);
+        setWatchedDocId(docId);
+        if (document) {
+          addToLog(`Document updated: ${JSON.stringify(document.data)}`);
+        } else {
+          addToLog('Document deleted');
+        }
+      },
+      e => {
+        documentListenerRef.current = null;
+        setIsListeningDocument(false);
+        addToLog(`Document listener stopped: ${e.code}: ${e.message}`);
+      },
+    );
 
     setIsListeningDocument(true);
     addToLog(`Started listening to document: ${docId}`);
@@ -107,6 +125,7 @@ export const RealtimeDemoScreen: React.FC = () => {
       const doc = await collection.add({
         message: `Hello at ${new Date().toLocaleString()}`,
         sender: 'Test User',
+        userId: currentUserId(),
         timestamp: new Date().toISOString(),
       });
       addToLog(`Created document: ${doc.id}`);
@@ -131,7 +150,7 @@ export const RealtimeDemoScreen: React.FC = () => {
     let currentDocs = documents;
     if (currentDocs.length === 0) {
       try {
-        currentDocs = await collection.getAll();
+        currentDocs = await mine(collection).get();
       } catch (e) {
         addToLog('No documents to update. Create a document first!');
         return;
@@ -161,7 +180,7 @@ export const RealtimeDemoScreen: React.FC = () => {
     let currentDocs = documents;
     if (currentDocs.length === 0) {
       try {
-        currentDocs = await collection.getAll();
+        currentDocs = await mine(collection).get();
       } catch (e) {
         addToLog('No documents to delete. Create a document first!');
         return;

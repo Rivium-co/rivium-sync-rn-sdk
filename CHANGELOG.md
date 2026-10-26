@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.3.0
+
+### Breaking
+
+- `set()` now replaces the document: fields you leave out are removed. Before,
+  it merged into the existing document. To keep merging, pass
+  `{ merge: true }`: `todos.set('id', data, { merge: true })`.
+  `WriteBatch.set()` takes the same option.
+
+### Added
+
+- Query listeners (`query.listen()`) now work on Android too.
+- Listeners are checked by your security rules on the server and receive only
+  the changes they are allowed to see.
+- `listen(callback, onError)`, `listenDocument(id, callback, onError)` and
+  `query.listen(callback, onError)` tell you why a listener stopped, with a
+  `RiviumSyncError`: `query_not_allowed` when the rules do not allow the query
+  (its `fields` name the filters that would make it allowed),
+  `listener_revoked` when the rules stop allowing it, `permission_denied` when
+  the rules do not allow reading it. After an error the listener receives
+  nothing more. `onError` is optional.
+- `query.get()` rejects with a `RiviumSyncError` with code `query_not_allowed`
+  (and its `fields`) when the rules do not allow the query.
+- `RiviumSyncError` and `SetOptions` are exported.
+- Reads and writes the server refused reject with a `RiviumSyncError` whose
+  `statusCode` is the HTTP status (403 when your security rules refused, 400 /
+  404 / 422 for a request the server will not accept). Its `code` stays what it
+  was (for example `DOCUMENT_ERROR`).
+- `RiviumSync.onDocumentRejected((documentId, operation, error) => ...)`: with
+  offline persistence, a queued write the server refuses (your security rules,
+  invalid data) is dropped instead of retried, the local copy goes back to what
+  the server has, and this callback tells you.
+
+### Fixed
+
+- A write made offline that could not be sent (no network, server error) is
+  retried until it goes through. Before, it was given up after
+  3 attempts and stayed on the device unsent, and a queued delete that failed
+  this way was later sent as an update, so the document was not deleted.
+- `maxSyncRetries` is deprecated and has no effect: writes are retried until they go through, and refused ones are
+  rolled back.
+- Android: queries filtering on a number or a boolean failed; filter values now
+  keep their type.
+- `listenDocument()` receives only its own document, not every change in the
+  collection.
+- With offline persistence on, the offline cache stands in only when the server
+  cannot answer (no network, 401 while the user token is renewed, 408, 429,
+  5xx). When it answers no (403 your security rules, 400 / 404 / 422), reads
+  and writes reject with that answer, and a write is not queued. Deleting a
+  document that does not exist succeeds.
+- `getAll()` that your security rules do not allow rejects with
+  `query_not_allowed` and its `fields`, as `query.get()` does.
+- iOS: `disconnect()` goes offline straight away; a write made right after it
+  is queued.
+- Uses rivium-sync-android 0.3.0 and RiviumSync (iOS) 0.3.0, installed
+  automatically.
+
 ## 0.2.8
 
 - `get()` with offline persistence throws when the server can't be reached

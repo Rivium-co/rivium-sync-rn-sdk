@@ -281,6 +281,14 @@ export const HomeScreen: React.FC = () => {
         color="#14B8A6"
         onPress={() => navigation.navigate('OfflineDemo')}
       />
+
+      <DemoCard
+        icon={'\u2713'}
+        title="Security Rules"
+        description="What the server refuses, and that the SDK reports it"
+        color="#EF4444"
+        onPress={() => navigation.navigate('RulesDemo')}
+      />
     </ScrollView>
   );
 };

@@ -9,6 +9,8 @@ A comprehensive example app demonstrating all features of the RiviumSync React N
 - **Query Operations** - Filter, sort, and paginate data
 - **Batch Operations** - Atomic multi-document writes
 - **Offline Persistence** - Work offline with automatic sync
+- **Security Rules** - Nine PASS / FAIL checks for the default "owner only"
+  rules (what the server refuses, and that the SDK reports it), plus "Switch user"
 
 ## Setup
 
@@ -17,20 +19,31 @@ A comprehensive example app demonstrating all features of the RiviumSync React N
    - Copy your API Key
    - Note your database name (e.g. `my-app`) as shown in Rivium Console
 
-2. **Configure the app** by editing `src/config.ts`:
+2. **Configure the app**: copy `src/config.example.ts` to `src/config.ts`
+   (git ignores it) and fill in your values:
 
 ```typescript
 export const AppConfig = {
   apiKey: 'your-api-key-here',
   databaseName: 'my-app', // database NAME from Rivium Console, not its UUID
+  serverSecret: '',       // DEBUG ONLY, see below
+  demoUserId: 'rn-demo-user',
   // ...
 };
 ```
 
+   - `serverSecret` (development builds only): lets the demo token minter in
+     `src/demoUser.ts` sign user tokens for `demoUserId`, so the app works with
+     "Require signed user tokens" and the owner-only rules. A real app never
+     holds a server secret: your own backend mints the token.
+
+   Documents the app creates carry `userId`, and lists and listeners filter on
+   it (`where('userId', '==', me)`): security rules are not filters.
+
 3. **Install dependencies**:
 
 ```bash
-cd examples/react_native_example
+cd example
 npm install
 ```
 

@@ -8,12 +8,12 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import RiviumSync, {SyncDatabase, SyncCollection} from '@rivium/sync-react-native';
+import RiviumSync, {SyncCollection} from '@rivium/sync-react-native';
 import {AppConfig} from '../config';
+import {currentUserId} from '../demoUser';
 import {ResultCard, CodeSnippet} from '../components';
 
 export const BatchDemoScreen: React.FC = () => {
-  const [db, setDb] = useState<SyncDatabase | null>(null);
   const [collection, setCollection] = useState<SyncCollection | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -23,7 +23,6 @@ export const BatchDemoScreen: React.FC = () => {
   useEffect(() => {
     const database = RiviumSync.database(AppConfig.databaseName);
     const col = database.collection(AppConfig.messagesCollection);
-    setDb(database);
     setCollection(col);
   }, []);
 
@@ -42,6 +41,7 @@ export const BatchDemoScreen: React.FC = () => {
         docIds.push(docId);
         batch.set(collection, docId, {
           message: `Batch created document ${i}`,
+          userId: currentUserId(),
           index: i,
           createdAt: new Date().toISOString(),
           batchId: Date.now().toString(),
@@ -137,11 +137,13 @@ export const BatchDemoScreen: React.FC = () => {
       // Create 2 new documents
       batch.set(collection, `mixed-create-${timestamp}-1`, {
         message: 'Mixed batch - created 1',
+        userId: currentUserId(),
         type: 'created',
         timestamp: new Date().toISOString(),
       });
       batch.set(collection, `mixed-create-${timestamp}-2`, {
         message: 'Mixed batch - created 2',
+        userId: currentUserId(),
         type: 'created',
         timestamp: new Date().toISOString(),
       });

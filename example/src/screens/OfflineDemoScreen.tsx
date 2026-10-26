@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import RiviumSync, {SyncState, SyncCollection} from '@rivium/sync-react-native';
 import {AppConfig} from '../config';
+import {currentUserId, mine} from '../demoUser';
 import {ResultCard, CodeSnippet} from '../components';
 
 export const OfflineDemoScreen: React.FC = () => {
@@ -69,6 +70,7 @@ export const OfflineDemoScreen: React.FC = () => {
     try {
       const doc = await collection.add({
         message: `Created at ${new Date().toLocaleString()}`,
+        userId: currentUserId(),
         timestamp: new Date().toISOString(),
         isConnected,
       });
@@ -92,7 +94,7 @@ export const OfflineDemoScreen: React.FC = () => {
     setResult(null);
 
     try {
-      const docs = await collection.getAll();
+      const docs = await mine(collection).get();
       const preview = docs
         .slice(0, 3)
         .map(d => `- ${d.id.substring(0, 8)}...: ${d.data.message || 'no message'}`)

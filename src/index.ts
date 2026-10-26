@@ -21,7 +21,7 @@ const RiviumSyncModule = NativeModules.RiviumSync
     );
 
 // NativeEventEmitter for iOS (works reliably)
-// On Android, we use Promise-based callbacks instead
+// On Android, listeners use Promise-based callbacks instead (see receiveListenerEvents)
 const eventEmitter = new NativeEventEmitter(RiviumSyncModule);
 
 // Types
@@ -64,8 +64,37 @@ export interface RiviumSyncConfig {
   syncOnReconnect?: boolean;
   /** Conflict resolution strategy (default: 'serverWins') */
   conflictStrategy?: ConflictStrategy;
-  /** Maximum sync retry attempts (default: 3) */
+  /**
+   * @deprecated No longer limits anything: as in Firestore, a write that could not be sent (no network, server
+   * error) is retried until it goes through, and one the server refuses is rolled back (`onDocumentRejected`).
+   */
   maxSyncRetries?: number;
+  /** For Rivium's own SDK tests; apps don't use this. */
+  emulator?: RiviumSyncEmulator;
+}
+
+/** For Rivium's own SDK tests; apps don't use this. */
+export interface RiviumSyncEmulator {
+  /** Host name or IP address, without scheme or port. */
+  host: string;
+  /** The API port. */
+  port?: number;
+}
+
+/** For Rivium's own SDK tests; apps don't use this. */
+export const DEFAULT_EMULATOR_PORT = 3006;
+
+/** The emulator settings checked the way the native SDKs check them; throws on a bad host or port. */
+function checkedEmulator(emulator: RiviumSyncEmulator): { host: string; port: number } {
+  const host = typeof emulator?.host === 'string' ? emulator.host.trim() : '';
+  if (!host || host.includes('/') || host.includes(':')) {
+    throw new Error('emulator.host is a host name or IP address, without scheme or port');
+  }
+  const port = emulator.port ?? DEFAULT_EMULATOR_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('emulator.port must be 1-65535');
+  }
+  return { host, port };
 }
 
 export interface SyncDocument {
@@ -116,6 +145,171 @@ export interface ListenerRegistration {
   remove: () => void;
 }
 
+/** Options for `set()`. */
+export interface SetOptions {
+  /**
+   * Merge `data` into the document and keep its other fields. Default `false`:
+   * the document becomes exactly `data`.
+   */
+  merge?: boolean;
+}
+
+/**
+ * Error codes the security rules report:
+ * - `query_not_allowed`: the rules do not allow the query (rules are not
+ *   filters); `fields` names the filters that would make it allowed.
+ * - `listener_revoked`: the rules stopped allowing a listener.
+ * - `permission_denied`: the rules do not allow reading what a listener
+ *   listens to.
+ */
+export type RiviumSyncErrorCode = 'query_not_allowed' | 'listener_revoked' | 'permission_denied';
+
+/**
+ * The error a listener's `onError` receives, what a query's `get()` throws
+ * when the security rules do not allow the query, and what reads and writes
+ * throw when the server refused them: `statusCode` is the HTTP status (403
+ * when your security rules refused, 400 / 404 / 422 for a request the server
+ * will not accept). These final answers are thrown even with offline
+ * persistence on; only when the server cannot answer (no network, 401 while
+ * the user token is renewed, 408, 429, 5xx) do reads come from the cache and
+ * writes wait in the queue.
+ */
+export class RiviumSyncError extends Error {
+  static readonly QUERY_NOT_ALLOWED = 'query_not_allowed';
+  static readonly LISTENER_REVOKED = 'listener_revoked';
+  static readonly PERMISSION_DENIED = 'permission_denied';
+
+  /** A {@link RiviumSyncErrorCode}, another server code (e.g. `too_many_listeners`), or `UNKNOWN_ERROR`. */
+  readonly code: RiviumSyncErrorCode | string;
+  /** For `query_not_allowed`: the fields to filter on, when the server names them (may be empty). */
+  readonly fields: string[];
+  /** The HTTP status of the server's answer, when there was one. */
+  readonly statusCode?: number;
+
+  constructor(code: string, message: string, fields: string[] = [], statusCode?: number) {
+    super(message);
+    this.name = 'RiviumSyncError';
+    this.code = code;
+    this.fields = fields;
+    this.statusCode = statusCode;
+    Object.setPrototypeOf(this, RiviumSyncError.prototype);
+  }
+
+  /** Reads the error a native listener event carries. */
+  static fromNative(error: any): RiviumSyncError {
+    const fields = Array.isArray(error?.fields)
+      ? error.fields.filter((f: unknown): f is string => typeof f === 'string')
+      : [];
+    return new RiviumSyncError(
+      typeof error?.code === 'string' ? error.code : 'UNKNOWN_ERROR',
+      typeof error?.message === 'string' ? error.message : 'Unknown error',
+      fields,
+      typeof error?.statusCode === 'number' ? error.statusCode : undefined
+    );
+  }
+}
+
+/**
+ * A native promise rejection as the app sees it: `query_not_allowed` becomes a
+ * {@link RiviumSyncError} with its fields, and an error the server answered
+ * (its HTTP status is in the rejection's `userInfo`) becomes a
+ * {@link RiviumSyncError} with that `statusCode`, keeping the native code
+ * (e.g. `DOCUMENT_ERROR`). Anything else (the server could not be reached) is
+ * passed on unchanged.
+ */
+function typedError(error: any): unknown {
+  if (error instanceof RiviumSyncError) return error;
+  const userInfo = error?.userInfo;
+  const status = userInfo?.statusCode ?? error?.statusCode;
+  const statusCode = typeof status === 'number' ? status : undefined;
+  if (error?.code === RiviumSyncError.QUERY_NOT_ALLOWED) {
+    const fields = userInfo?.fields ?? error?.fields;
+    return RiviumSyncError.fromNative({ code: error.code, message: error.message, fields, statusCode: statusCode ?? 403 });
+  }
+  if (statusCode === undefined || typeof error?.code !== 'string') return error;
+  const typed = new RiviumSyncError(error.code, typeof error.message === 'string' ? error.message : 'Unknown error', [], statusCode);
+  if (userInfo !== undefined) Object.assign(typed, { userInfo });
+  return typed;
+}
+
+/** Calls a native method and rejects with {@link typedError}. */
+async function callNative<T = any>(method: string, args?: unknown): Promise<T> {
+  try {
+    return await (args === undefined ? RiviumSyncModule[method]() : RiviumSyncModule[method](args));
+  } catch (e) {
+    throw typedError(e);
+  }
+}
+
+let listenerCounter = 0;
+
+/** A listener id that is unique within this app run. */
+function newListenerId(prefix: string): string {
+  listenerCounter += 1;
+  return `${prefix}_${Date.now()}_${listenerCounter}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
+type ListenerKind = 'collection' | 'document' | 'query';
+
+const WAIT_METHOD: Record<ListenerKind, string> = {
+  collection: 'waitForCollectionUpdate',
+  document: 'waitForDocumentUpdate',
+  query: 'waitForQueryUpdate',
+};
+
+/**
+ * Delivers a native listener's events: `onEvent` gets each update, `onError`
+ * the error that ends the listener (nothing is delivered after it). On iOS the
+ * events come through the event emitter; on Android JS waits for each one.
+ * Returns a function that stops delivery.
+ */
+function receiveListenerEvents(
+  kind: ListenerKind,
+  listenerId: string,
+  onEvent: (event: any) => void,
+  onError?: (error: RiviumSyncError) => void
+): () => void {
+  let active = true;
+  const handle = (event: any): boolean => {
+    if (!active) return false;
+    if (event?.error) {
+      active = false;
+      onError?.(RiviumSyncError.fromNative(event.error));
+      return false;
+    }
+    onEvent(event);
+    return true;
+  };
+
+  if (Platform.OS === 'android') {
+    const waitForUpdates = async () => {
+      while (active) {
+        try {
+          const event = await RiviumSyncModule[WAIT_METHOD[kind]]({ listenerId });
+          if (!handle(event)) break;
+        } catch (e: any) {
+          // Listener was removed - exit loop
+          if (e?.code === 'LISTENER_REMOVED' || !active) break;
+          // Brief delay before retry on unexpected error
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+    };
+    waitForUpdates();
+    return () => {
+      active = false;
+    };
+  }
+
+  const subscription: EmitterSubscription = eventEmitter.addListener(`${kind}Update`, (event: any) => {
+    if (event?.listenerId === listenerId) handle(event);
+  });
+  return () => {
+    active = false;
+    subscription.remove();
+  };
+}
+
 // Query builder class
 export class SyncQuery {
   private databaseId: string;
@@ -152,52 +346,57 @@ export class SyncQuery {
     return this;
   }
 
+  /**
+   * Run the query. Rejects with a {@link RiviumSyncError} with code
+   * `query_not_allowed` when the security rules do not allow it; its `fields`
+   * name the filters that would make it allowed.
+   */
   async get(): Promise<SyncDocument[]> {
-    return RiviumSyncModule.queryDocuments({
-      databaseId: this.databaseId,
-      collectionId: this.collectionId,
-      filters: this.filters,
-      orderBy: this.orderByField
-        ? { field: this.orderByField, direction: this.orderDirection }
-        : undefined,
-      limit: this.limitCount,
-      offset: this.offsetCount,
-    });
+    return callNative('queryDocuments', this.params());
   }
 
-  listen(callback: (documents: SyncDocument[]) => void): ListenerRegistration {
-    const listenerId = `query_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-    let subscription: EmitterSubscription | null = null;
-
-    // Set up event listener for iOS
-    if (Platform.OS === 'ios') {
-      subscription = eventEmitter.addListener('queryUpdate', (event: any) => {
-        if (event.listenerId === listenerId) {
-          callback(event.documents);
-        }
-      });
-    }
+  /**
+   * Listen to the query's results. `callback` gets the current results, then
+   * every change. `onError` (optional) gets a {@link RiviumSyncError}:
+   * `query_not_allowed` (with `fields`) when the security rules do not allow
+   * the query, or `listener_revoked` when they stop allowing it. After an
+   * error the listener receives nothing more.
+   */
+  listen(
+    callback: (documents: SyncDocument[]) => void,
+    onError?: (error: RiviumSyncError) => void
+  ): ListenerRegistration {
+    const listenerId = newListenerId('query');
+    const stop = receiveListenerEvents(
+      'query',
+      listenerId,
+      (event) => {
+        if (Array.isArray(event?.documents)) callback(event.documents);
+      },
+      onError
+    );
 
     // Start native listener
-    RiviumSyncModule.listenQuery({
-      databaseId: this.databaseId,
-      collectionId: this.collectionId,
-      filters: this.filters,
-      orderBy: this.orderByField
-        ? { field: this.orderByField, direction: this.orderDirection }
-        : undefined,
-      limit: this.limitCount,
-      offset: this.offsetCount,
-      listenerId,
-    });
-
-    // TODO: Add Android callback-based approach for query listeners if needed
+    RiviumSyncModule.listenQuery({ ...this.params(), listenerId });
 
     return {
       remove: () => {
-        subscription?.remove();
+        stop();
         RiviumSyncModule.removeQueryListener({ listenerId });
       },
+    };
+  }
+
+  private params() {
+    return {
+      databaseId: this.databaseId,
+      collectionId: this.collectionId,
+      filters: this.filters,
+      orderBy: this.orderByField
+        ? { field: this.orderByField, direction: this.orderDirection }
+        : undefined,
+      limit: this.limitCount,
+      offset: this.offsetCount,
     };
   }
 }
@@ -215,7 +414,7 @@ export class SyncCollection {
   }
 
   async add(data: Record<string, any>): Promise<SyncDocument> {
-    return RiviumSyncModule.addDocument({
+    return callNative('addDocument', {
       databaseId: this.databaseId,
       collectionId: this.id,
       data,
@@ -223,7 +422,7 @@ export class SyncCollection {
   }
 
   async get(documentId: string): Promise<SyncDocument | null> {
-    return RiviumSyncModule.getDocument({
+    return callNative('getDocument', {
       databaseId: this.databaseId,
       collectionId: this.id,
       documentId,
@@ -231,7 +430,7 @@ export class SyncCollection {
   }
 
   async getAll(): Promise<SyncDocument[]> {
-    return RiviumSyncModule.getAllDocuments({
+    return callNative('getAllDocuments', {
       databaseId: this.databaseId,
       collectionId: this.id,
     });
@@ -241,7 +440,7 @@ export class SyncCollection {
     documentId: string,
     data: Record<string, any>
   ): Promise<SyncDocument> {
-    return RiviumSyncModule.updateDocument({
+    return callNative('updateDocument', {
       databaseId: this.databaseId,
       collectionId: this.id,
       documentId,
@@ -249,20 +448,27 @@ export class SyncCollection {
     });
   }
 
+  /**
+   * Write a document, creating it if it does not exist. By default the
+   * document becomes exactly `data`: fields left out are removed. With
+   * `{ merge: true }`, `data` is merged into it and its other fields are kept.
+   */
   async set(
     documentId: string,
-    data: Record<string, any>
+    data: Record<string, any>,
+    options: SetOptions = {}
   ): Promise<SyncDocument> {
-    return RiviumSyncModule.setDocument({
+    return callNative('setDocument', {
       databaseId: this.databaseId,
       collectionId: this.id,
       documentId,
       data,
+      merge: options.merge ?? false,
     });
   }
 
   async delete(documentId: string): Promise<void> {
-    return RiviumSyncModule.deleteDocument({
+    return callNative('deleteDocument', {
       databaseId: this.databaseId,
       collectionId: this.id,
       documentId,
@@ -277,10 +483,18 @@ export class SyncCollection {
     return this.query().where(field, operator, value);
   }
 
-  listen(callback: (documents: SyncDocument[]) => void): ListenerRegistration {
-    const listenerId = `collection_${this.id}_${Date.now()}`;
-    let isActive = true;
-    let subscription: EmitterSubscription | null = null;
+  /**
+   * Listen to all documents of the collection. `callback` gets the current
+   * documents, then every change. `onError` (optional) gets a
+   * {@link RiviumSyncError} when the security rules do not allow the listener
+   * or stop allowing it (`listener_revoked`); after an error the listener
+   * receives nothing more.
+   */
+  listen(
+    callback: (documents: SyncDocument[]) => void,
+    onError?: (error: RiviumSyncError) => void
+  ): ListenerRegistration {
+    const listenerId = newListenerId(`collection_${this.id}`);
 
     // Start native listener
     RiviumSyncModule.listenCollection({
@@ -289,51 +503,34 @@ export class SyncCollection {
       listenerId,
     });
 
-    if (Platform.OS === 'android') {
-      // On Android, use Promise-based callback approach (event emitter is unreliable)
-      const waitForUpdates = async () => {
-        while (isActive) {
-          try {
-            const result = await RiviumSyncModule.waitForCollectionUpdate({ listenerId });
-            if (isActive && result?.documents) {
-              callback(result.documents);
-            }
-          } catch (e: any) {
-            // Listener was removed - exit loop
-            if (e?.code === 'LISTENER_REMOVED' || !isActive) {
-              break;
-            }
-            // Brief delay before retry on unexpected error
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        }
-      };
-      waitForUpdates();
-    } else {
-      // On iOS, use NativeEventEmitter (works reliably)
-      subscription = eventEmitter.addListener('collectionUpdate', (event) => {
-        if (event?.listenerId === listenerId) {
-          callback(event.documents);
-        }
-      });
-    }
+    const stop = receiveListenerEvents(
+      'collection',
+      listenerId,
+      (event) => {
+        if (Array.isArray(event?.documents)) callback(event.documents);
+      },
+      onError
+    );
 
     return {
       remove: () => {
-        isActive = false;
-        subscription?.remove();
+        stop();
         RiviumSyncModule.removeCollectionListener({ listenerId });
       },
     };
   }
 
+  /**
+   * Listen to one document. `callback` gets the current document (null when
+   * it does not exist), then every change (null when it is deleted).
+   * `onError` (optional): as for {@link SyncCollection.listen}.
+   */
   listenDocument(
     documentId: string,
-    callback: (document: SyncDocument | null) => void
+    callback: (document: SyncDocument | null) => void,
+    onError?: (error: RiviumSyncError) => void
   ): ListenerRegistration {
-    const listenerId = `doc_${this.id}_${documentId}_${Date.now()}`;
-    let isActive = true;
-    let subscription: EmitterSubscription | null = null;
+    const listenerId = newListenerId(`doc_${this.id}_${documentId}`);
 
     // Start native listener
     RiviumSyncModule.listenDocument({
@@ -343,37 +540,16 @@ export class SyncCollection {
       listenerId,
     });
 
-    if (Platform.OS === 'android') {
-      // On Android, use Promise-based callback approach
-      const waitForUpdates = async () => {
-        while (isActive) {
-          try {
-            const result = await RiviumSyncModule.waitForDocumentUpdate({ listenerId });
-            if (isActive) {
-              callback(result?.document ?? null);
-            }
-          } catch (e: any) {
-            if (e?.code === 'LISTENER_REMOVED' || !isActive) {
-              break;
-            }
-            await new Promise(resolve => setTimeout(resolve, 50));
-          }
-        }
-      };
-      waitForUpdates();
-    } else {
-      // On iOS, use NativeEventEmitter
-      subscription = eventEmitter.addListener('documentUpdate', (event) => {
-        if (event?.listenerId === listenerId) {
-          callback(event.document);
-        }
-      });
-    }
+    const stop = receiveListenerEvents(
+      'document',
+      listenerId,
+      (event) => callback(event?.document ?? null),
+      onError
+    );
 
     return {
       remove: () => {
-        isActive = false;
-        subscription?.remove();
+        stop();
         RiviumSyncModule.removeDocumentListener({ listenerId });
       },
     };
@@ -402,11 +578,11 @@ export class SyncDatabase {
   }
 
   async listCollections(): Promise<CollectionInfo[]> {
-    return RiviumSyncModule.listCollections({ databaseId: this.id });
+    return callNative('listCollections', { databaseId: this.id });
   }
 
   async createCollection(name: string): Promise<SyncCollection> {
-    const info = await RiviumSyncModule.createCollection({
+    const info = await callNative('createCollection', {
       databaseId: this.id,
       name,
     });
@@ -427,6 +603,7 @@ interface BatchOperation {
   collectionId: string;
   documentId?: string;
   data?: Record<string, any>;
+  merge?: boolean;
 }
 
 /**
@@ -443,7 +620,7 @@ interface BatchOperation {
  * ```typescript
  * const batch = RiviumSync.batch();
  *
- * // Set a document
+ * // Set a document (replaces it; pass { merge: true } to merge instead)
  * batch.set(usersCollection, 'user1', { name: 'John', age: 30 });
  *
  * // Update a document
@@ -463,14 +640,21 @@ export class WriteBatch {
   /**
    * Writes to the document referred to by the provided collection and document ID.
    * If the document does not exist yet, it will be created.
-   * If the document exists, its contents will be overwritten.
+   * If the document exists, its contents will be overwritten - or, with
+   * `{ merge: true }`, `data` is merged into it and its other fields are kept.
    *
    * @param collection - The collection containing the document
    * @param documentId - The ID of the document to write
    * @param data - The data to write to the document
+   * @param options - `{ merge: true }` to merge instead of replace
    * @returns This WriteBatch instance for chaining
    */
-  set(collection: SyncCollection, documentId: string, data: Record<string, any>): WriteBatch {
+  set(
+    collection: SyncCollection,
+    documentId: string,
+    data: Record<string, any>,
+    options: SetOptions = {}
+  ): WriteBatch {
     this.checkNotCommitted();
     this.operations.push({
       type: 'set',
@@ -478,6 +662,7 @@ export class WriteBatch {
       collectionId: collection.id,
       documentId,
       data,
+      merge: options.merge ?? false,
     });
     return this;
   }
@@ -556,7 +741,7 @@ export class WriteBatch {
       await RiviumSyncModule.executeBatch({ operations: this.operations });
     } catch (error) {
       this.committed = false; // Allow retry
-      throw error;
+      throw typedError(error);
     }
   }
 
@@ -616,6 +801,22 @@ function tokenExpiryMs(jwt: string): number | null {
   }
 }
 
+/** The kind of write a queued operation was. */
+export type SyncOperationType = 'create' | 'update' | 'delete';
+
+/**
+ * Called when the server refused a write that was waiting offline (your
+ * security rules, invalid data). The write is dropped, not retried, and the
+ * local copy goes back to what the server has (a refused new document
+ * disappears), so listeners see the change. `error.statusCode` is the
+ * server's answer (403 when the rules refused).
+ */
+export type DocumentRejectedCallback = (
+  documentId: string,
+  operation: SyncOperationType,
+  error: RiviumSyncError
+) => void;
+
 // Main RiviumSync class
 class RiviumSyncClass {
   private _initialized = false;
@@ -625,6 +826,7 @@ class RiviumSyncClass {
   private syncStateListeners: ((state: SyncState) => void)[] = [];
   private pendingCountListeners: ((count: number) => void)[] = [];
   private awaitingUserTokenListeners: (() => void)[] = [];
+  private documentRejectedListeners: DocumentRejectedCallback[] = [];
   private tokenProvider: RiviumSyncTokenProvider | null = null;
   private tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private tokenExpiresAtMs: number | null = null;
@@ -632,6 +834,9 @@ class RiviumSyncClass {
 
   async init(config: RiviumSyncConfig): Promise<void> {
     if (this._initialized) return;
+
+    // Checked before anything starts, as the native SDKs check it.
+    const emulator = config.emulator ? checkedEmulator(config.emulator) : undefined;
 
     this._offlineEnabled = config.offlineEnabled ?? false;
 
@@ -657,6 +862,9 @@ class RiviumSyncClass {
       syncOnReconnect: config.syncOnReconnect ?? true,
       conflictStrategy: config.conflictStrategy ?? 'serverWins',
       maxSyncRetries: config.maxSyncRetries ?? 3,
+      // A local server (emulator), or Rivium's when not set.
+      emulatorHost: emulator?.host,
+      emulatorPort: emulator?.port,
       // The native SDK reports this package in the X-Rivium-SDK header.
       wrapperSdkName: SDK_NAME,
       wrapperSdkVersion: SDK_VERSION,
@@ -681,6 +889,14 @@ class RiviumSyncClass {
 
     eventEmitter.addListener('onAwaitingUserToken', () => {
       this.awaitingUserTokenListeners.forEach((cb) => cb());
+    });
+
+    eventEmitter.addListener('onDocumentRejected', (event: any) => {
+      if (typeof event?.documentId !== 'string') return;
+      const operation: SyncOperationType =
+        event.operation === 'create' || event.operation === 'delete' ? event.operation : 'update';
+      const error = RiviumSyncError.fromNative(event.error);
+      this.documentRejectedListeners.forEach((cb) => cb(event.documentId, operation, error));
     });
 
     this._initialized = true;
@@ -931,6 +1147,26 @@ class RiviumSyncClass {
     };
   }
 
+  /**
+   * Called when the server refused a write that was waiting offline (only
+   * with `offlineEnabled`). See {@link DocumentRejectedCallback}. A write made
+   * online that the server refuses is not queued: its promise rejects with a
+   * {@link RiviumSyncError} instead. Returns a function that removes the
+   * listener.
+   *
+   * ```ts
+   * RiviumSync.onDocumentRejected((id, operation, error) => {
+   *   console.warn(`${operation} of ${id} refused (${error.statusCode})`);
+   * });
+   * ```
+   */
+  onDocumentRejected(callback: DocumentRejectedCallback): () => void {
+    this.documentRejectedListeners.push(callback);
+    return () => {
+      this.documentRejectedListeners = this.documentRejectedListeners.filter((cb) => cb !== callback);
+    };
+  }
+
   /** True while `connect()` is waiting for a user token. */
   async isAwaitingUserToken(): Promise<boolean> {
     return RiviumSyncModule.isAwaitingUserToken();
@@ -973,7 +1209,7 @@ class RiviumSyncClass {
   }
 
   async listDatabases(): Promise<DatabaseInfo[]> {
-    return RiviumSyncModule.listDatabases();
+    return callNative('listDatabases');
   }
 
   // ==================== Batch Operations ====================
