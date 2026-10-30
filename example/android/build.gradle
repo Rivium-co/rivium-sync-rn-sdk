@@ -25,7 +25,7 @@ allprojects {
         google()
         mavenCentral()
         maven {
-            // Paho MQTT repository
+            // Eclipse Paho (used by the native Android SDK)
             url "https://repo.eclipse.org/content/repositories/paho-releases/"
         }
     }

@@ -81,7 +81,7 @@
 
 - Realtime connects where the Sync API tells it (host, port and whether the
   connection is encrypted), so your project can move to encrypted realtime
-  (`mqtts`, port 8885) without an app update. It never falls back from an
+  without an app update. It never falls back from an
   encrypted connection to a plain one.
 - iOS: the package no longer forces an unencrypted connection; `mqttUseTls`
   is passed to the native SDK only when your app sets it.

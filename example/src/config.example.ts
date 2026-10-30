@@ -24,7 +24,7 @@ export const AppConfig = {
   // signs in as `${demoUserId}-2`.
   demoUserId: 'rn-demo-user',
 
-  // For Rivium's own SDK tests; apps don't use this. Leave ''.
+  // Leave ''.
   emulatorHost: '',
 
   // Demo collection names
